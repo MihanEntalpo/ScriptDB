@@ -8,7 +8,7 @@ sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
 from scriptdb import BaseDB
 
 
-class TestDB(BaseDB):
+class MyTestDB(BaseDB):
     def migrations(self):
         return [
             {"name": "create_table", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)"}
@@ -18,7 +18,7 @@ class TestDB(BaseDB):
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / "test.db"
-    db = await TestDB.open(str(db_file))
+    db = await MyTestDB.open(str(db_file))
     try:
         yield db
     finally:
@@ -68,7 +68,7 @@ async def test_query_one_none(db):
 
 @pytest.mark.asyncio
 async def test_close_sets_initialized_false(tmp_path):
-    db = await TestDB.open(str(tmp_path / "db.sqlite"))
+    db = await MyTestDB.open(str(tmp_path / "db.sqlite"))
     await db.close()
     assert db.initialized is False
     with pytest.raises(RuntimeError):
@@ -77,7 +77,7 @@ async def test_close_sets_initialized_false(tmp_path):
 
 @pytest.mark.asyncio
 async def test_require_init_decorator():
-    db = TestDB("test.db")
+    db = MyTestDB("test.db")
     with pytest.raises(RuntimeError):
         await db.execute("SELECT 1")
 
