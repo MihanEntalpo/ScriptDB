@@ -103,6 +103,7 @@ class BaseDB(abc.ABC):
         self._periodic_specs: List[Tuple[int, Callable]] = []
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_hooks: List[Dict[str, Any]] = []
+        self._query_tasks: List[asyncio.Task] = []
 
         for name in dir(self):
             attr = getattr(self, name)
@@ -161,7 +162,7 @@ class BaseDB(abc.ABC):
             self._periodic_tasks.append(task)
 
     async def _ensure_migrations_table(self) -> None:
-        await self.conn.execute(
+        sql = (
             """
             CREATE TABLE IF NOT EXISTS applied_migrations (
                 name       TEXT PRIMARY KEY,
@@ -169,10 +170,14 @@ class BaseDB(abc.ABC):
             )
             """
         )
+        logger.debug("Executing SQL: %s", sql)
+        await self.conn.execute(sql)
         await self.conn.commit()
 
     async def _applied_versions(self) -> Set[str]:
-        cur = await self.conn.execute("SELECT name FROM applied_migrations")
+        sql = "SELECT name FROM applied_migrations"
+        logger.debug("Executing SQL: %s", sql)
+        cur = await self.conn.execute(sql)
         rows = await cur.fetchall()
         await cur.close()
         return {row["name"] for row in rows}
@@ -193,6 +198,7 @@ class BaseDB(abc.ABC):
                 continue
 
             if "sql" in mig:
+                logger.debug("Executing SQL script: %s", mig["sql"])
                 await self.conn.executescript(mig["sql"])
             elif "function" in mig:
                 func = mig["function"]
@@ -204,9 +210,9 @@ class BaseDB(abc.ABC):
             else:
                 raise ValueError(f"Migration {name} must have either 'sql' or 'function'")
 
-            await self.conn.execute(
-                "INSERT INTO applied_migrations(name) VALUES (?)", (name,)
-            )
+            sql = "INSERT INTO applied_migrations(name) VALUES (?)"
+            logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
+            await self.conn.execute(sql, (name,))
             await self.conn.commit()
 
     def _on_query(self) -> None:
@@ -224,7 +230,14 @@ class BaseDB(abc.ABC):
                         interval,
                     )
 
-                asyncio.create_task(runner())
+                task = asyncio.create_task(runner())
+                self._query_tasks.append(task)
+
+                def _cleanup(t: asyncio.Task, tasks=self._query_tasks) -> None:
+                    with contextlib.suppress(ValueError):
+                        tasks.remove(t)
+
+                task.add_done_callback(_cleanup)
 
     @require_init
     async def execute(
@@ -243,6 +256,7 @@ class BaseDB(abc.ABC):
             print(cur.lastrowid)
         """
         ps = params if params is not None else ()
+        logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
         await self.conn.commit()
         self._on_query()
@@ -265,6 +279,7 @@ class BaseDB(abc.ABC):
             )
             print(cur.rowcount)
         """
+        logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = await self.conn.executemany(sql, seq_params)
         await self.conn.commit()
         self._on_query()
@@ -287,6 +302,7 @@ class BaseDB(abc.ABC):
                 print(row["x"])
         """
         ps = params if params is not None else ()
+        logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
         rows = await cur.fetchall()
         await cur.close()
@@ -309,6 +325,7 @@ class BaseDB(abc.ABC):
                 print(row["x"])
         """
         ps = params if params is not None else ()
+        logger.debug("Executing SQL: %s; params: %s", sql, ps)
         async with self.conn.execute(sql, ps) as cur:
             self._on_query()
             async for row in cur:
@@ -331,6 +348,7 @@ class BaseDB(abc.ABC):
                 print(row["x"])
         """
         ps = params if params is not None else ()
+        logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
         row = await cur.fetchone()
         await cur.close()
@@ -347,6 +365,12 @@ class BaseDB(abc.ABC):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._periodic_tasks.clear()
+
+        for task in list(self._query_tasks):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._query_tasks.clear()
         if self.conn:
             await self.conn.close()
         self.initialized = False
