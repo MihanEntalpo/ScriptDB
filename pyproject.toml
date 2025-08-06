@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scriptdb"
+version = "0.1.0"
+description = "Base asynchronous SQLite database with migration support"
+dependencies = [
+    "aiosqlite>=0.19",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.20",
+]

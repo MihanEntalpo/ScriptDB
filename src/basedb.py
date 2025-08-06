@@ -1,6 +1,7 @@
 import abc
 import sqlite3
 import asyncio
+import inspect
 import aiosqlite
 from typing import Any, Callable, Dict, List, Set, Optional, Sequence, Iterable, Mapping, Union, Type, TypeVar, AsyncGenerator
 
@@ -14,11 +15,25 @@ def require_init(method: Callable) -> Callable:
     Raises:
         RuntimeError: if `init()` was not called before invocation.
     """
-    async def wrapper(self, *args, **kwargs):
-        if not getattr(self, 'initialized', False) or self.conn is None:
-            raise RuntimeError("вы не вызвали init")
-        return await method(self, *args, **kwargs)
-    return wrapper
+    if inspect.iscoroutinefunction(method):
+        async def async_wrapper(self, *args, **kwargs):
+            if not getattr(self, 'initialized', False) or self.conn is None:
+                raise RuntimeError("you didn't call init")
+            return await method(self, *args, **kwargs)
+        return async_wrapper
+    elif inspect.isasyncgenfunction(method):
+        async def async_gen_wrapper(self, *args, **kwargs):
+            if not getattr(self, 'initialized', False) or self.conn is None:
+                raise RuntimeError("you didn't call init")
+            async for item in method(self, *args, **kwargs):
+                yield item
+        return async_gen_wrapper
+    else:
+        def sync_wrapper(self, *args, **kwargs):
+            if not getattr(self, 'initialized', False) or self.conn is None:
+                raise RuntimeError("you didn't call init")
+            return method(self, *args, **kwargs)
+        return sync_wrapper
 
 class BaseDB(abc.ABC):
     """
@@ -200,10 +215,9 @@ class BaseDB(abc.ABC):
                 print(row["x"])
         """
         ps = params if params is not None else ()
-        cur = await self.conn.execute(sql, ps)
-        async for row in cur:
-            yield row
-        await cur.close()
+        async with self.conn.execute(sql, ps) as cur:
+            async for row in cur:
+                yield row
 
     @require_init
     async def query_one(
