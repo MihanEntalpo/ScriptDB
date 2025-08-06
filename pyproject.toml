@@ -6,9 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "scriptdb"
 version = "0.1.0"
 description = "Base asynchronous SQLite database with migration support"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "ScriptDB Contributors"}]
+requires-python = ">=3.8"
+keywords = ["sqlite", "migrations", "asyncio", "database"]
 dependencies = [
     "aiosqlite>=0.19",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.optional-dependencies]
 test = [

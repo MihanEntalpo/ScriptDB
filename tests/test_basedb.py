@@ -3,9 +3,9 @@ import pytest_asyncio
 import sys
 import pathlib
 
-# Add the src directory to sys.path so we can import basedb
+# Add the src directory to sys.path so we can import the package
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-from basedb import BaseDB
+from scriptdb import BaseDB
 
 
 class TestDB(BaseDB):
