@@ -2,11 +2,15 @@ import abc
 import sqlite3
 import asyncio
 import inspect
+import logging
+import contextlib
 import aiosqlite
-from typing import Any, Callable, Dict, List, Set, Optional, Sequence, Iterable, Mapping, Union, Type, TypeVar, AsyncGenerator
+from typing import Any, Callable, Dict, List, Set, Optional, Sequence, Iterable, Mapping, Union, Type, TypeVar, AsyncGenerator, Tuple
 
 # Type for self-returning class methods
 T = TypeVar('T', bound='BaseDB')
+
+logger = logging.getLogger(__name__)
 
 def require_init(method: Callable) -> Callable:
     """
@@ -35,6 +39,49 @@ def require_init(method: Callable) -> Callable:
             return method(self, *args, **kwargs)
         return sync_wrapper
 
+
+def run_every_seconds(seconds: int) -> Callable:
+    """Run decorated async method in background every ``seconds``.
+
+    Useful for periodic cleaners or updaters that should work while the
+    database connection stays open.
+
+    Example:
+        class MyDB(BaseDB):
+            @run_every_seconds(60)
+            async def cleanup(self):
+                ...  # cleanup every minute
+    """
+
+    def decorator(method: Callable) -> Callable:
+        if not inspect.iscoroutinefunction(method):
+            raise TypeError("run_every_seconds can only decorate async functions")
+        setattr(method, "_run_every_seconds", seconds)
+        return method
+
+    return decorator
+
+
+def run_every_queries(queries: int) -> Callable:
+    """Run decorated async method after every ``queries`` database calls.
+
+    Handy for tasks like checkpointing or vacuuming triggered by activity.
+
+    Example:
+        class MyDB(BaseDB):
+            @run_every_queries(1000)
+            async def checkpoint(self):
+                await self.execute("PRAGMA wal_checkpoint")
+    """
+
+    def decorator(method: Callable) -> Callable:
+        if not inspect.iscoroutinefunction(method):
+            raise TypeError("run_every_queries can only decorate async functions")
+        setattr(method, "_run_every_queries", queries)
+        return method
+
+    return decorator
+
 class BaseDB(abc.ABC):
     """
     Abstract async SQLite-backed database with migration support via aiosqlite.
@@ -53,6 +100,18 @@ class BaseDB(abc.ABC):
         self.db_path = db_path
         self.conn: Optional[aiosqlite.Connection] = None
         self.initialized: bool = False
+        self._periodic_specs: List[Tuple[int, Callable]] = []
+        self._periodic_tasks: List[asyncio.Task] = []
+        self._query_hooks: List[Dict[str, Any]] = []
+
+        for name in dir(self):
+            attr = getattr(self, name)
+            seconds = getattr(attr, "_run_every_seconds", None)
+            if seconds is not None:
+                self._periodic_specs.append((seconds, attr))
+            queries = getattr(attr, "_run_every_queries", None)
+            if queries is not None:
+                self._query_hooks.append({"interval": queries, "method": attr, "count": 0})
 
     @classmethod
     async def open(cls: Type[T], db_path: str) -> T:
@@ -85,6 +144,21 @@ class BaseDB(abc.ABC):
         await self._ensure_migrations_table()
         await self._apply_migrations()
         self.initialized = True
+
+        for seconds, method in self._periodic_specs:
+            async def runner(method=method, seconds=seconds):
+                while True:
+                    logger.info("Launching method %s", method.__name__)
+                    await method()
+                    logger.info(
+                        "Method %s finished, next run in %s seconds",
+                        method.__name__,
+                        seconds,
+                    )
+                    await asyncio.sleep(seconds)
+
+            task = asyncio.create_task(runner())
+            self._periodic_tasks.append(task)
 
     async def _ensure_migrations_table(self) -> None:
         await self.conn.execute(
@@ -135,6 +209,23 @@ class BaseDB(abc.ABC):
             )
             await self.conn.commit()
 
+    def _on_query(self) -> None:
+        for hook in self._query_hooks:
+            hook["count"] += 1
+            if hook["count"] >= hook["interval"]:
+                hook["count"] = 0
+
+                async def runner(method=hook["method"], interval=hook["interval"]):
+                    logger.info("Launching method %s", method.__name__)
+                    await method()
+                    logger.info(
+                        "Method %s finished, next run after %s queries",
+                        method.__name__,
+                        interval,
+                    )
+
+                asyncio.create_task(runner())
+
     @require_init
     async def execute(
         self,
@@ -154,6 +245,7 @@ class BaseDB(abc.ABC):
         ps = params if params is not None else ()
         cur = await self.conn.execute(sql, ps)
         await self.conn.commit()
+        self._on_query()
         return cur
 
     @require_init
@@ -175,6 +267,7 @@ class BaseDB(abc.ABC):
         """
         cur = await self.conn.executemany(sql, seq_params)
         await self.conn.commit()
+        self._on_query()
         return cur
 
     @require_init
@@ -197,6 +290,7 @@ class BaseDB(abc.ABC):
         cur = await self.conn.execute(sql, ps)
         rows = await cur.fetchall()
         await cur.close()
+        self._on_query()
         return rows
 
     @require_init
@@ -216,6 +310,7 @@ class BaseDB(abc.ABC):
         """
         ps = params if params is not None else ()
         async with self.conn.execute(sql, ps) as cur:
+            self._on_query()
             async for row in cur:
                 yield row
 
@@ -239,6 +334,7 @@ class BaseDB(abc.ABC):
         cur = await self.conn.execute(sql, ps)
         row = await cur.fetchone()
         await cur.close()
+        self._on_query()
         return row
 
     @require_init
@@ -246,6 +342,11 @@ class BaseDB(abc.ABC):
         """
         Close the database connection.
         """
+        for task in self._periodic_tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._periodic_tasks.clear()
         if self.conn:
             await self.conn.close()
         self.initialized = False
