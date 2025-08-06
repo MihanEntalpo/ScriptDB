@@ -1,0 +1,66 @@
+# ScriptDB
+
+ScriptDB is a tiny asynchronous wrapper around SQLite with built‑in migration
+support. It is designed for small integration scripts and ETL jobs where using
+an external database would be unnecessary. The project aims to provide a
+pleasant developer experience while keeping the API minimal.
+
+## Features
+
+* **Async first** – built on top of [`aiosqlite`](https://github.com/omnilib/aiosqlite)
+  for non‑blocking database access.
+* **Migrations** – declare migrations as SQL snippets or Python callables and
+  let ScriptDB apply them once.
+* **Lightweight** – no server to run and no complicated setup; perfect for
+  throw‑away scripts or small tools.
+
+## Installation
+
+The project can be installed from source:
+
+```bash
+pip install .
+```
+
+Once published to PyPI it will be installable with:
+
+```bash
+pip install scriptdb
+```
+
+## Quick start
+
+Create a subclass of `BaseDB` and provide a list of migrations:
+
+```python
+from scriptdb import BaseDB
+
+class MyDB(BaseDB):
+    def migrations(self):
+        return [
+            {"name": "create_table", "sql": "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)"}
+        ]
+
+async def main():
+    db = await MyDB.open("app.db")
+    await db.execute("INSERT INTO items(name) VALUES(?)", ("apple",))
+    row = await db.query_one("SELECT name FROM items")
+    print(row["name"])  # -> apple
+    await db.close()
+```
+
+## Running tests
+
+```bash
+pytest
+```
+
+## Contributing
+
+Issues and pull requests are welcome. Please run the tests before submitting
+changes.
+
+## License
+
+This project is licensed under the terms of the MIT license. See
+[LICENSE](LICENSE) for details.
