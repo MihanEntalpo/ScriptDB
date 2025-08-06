@@ -161,6 +161,12 @@ class BaseDB(abc.ABC):
             task = asyncio.create_task(runner())
             self._periodic_tasks.append(task)
 
+            def _cleanup(t: asyncio.Task, tasks=self._periodic_tasks) -> None:
+                with contextlib.suppress(ValueError):
+                    tasks.remove(t)
+
+            task.add_done_callback(_cleanup)
+
     async def _ensure_migrations_table(self) -> None:
         sql = (
             """
@@ -198,7 +204,10 @@ class BaseDB(abc.ABC):
                 continue
 
             if "sql" in mig:
-                logger.debug("Executing SQL script: %s", mig["sql"])
+                logger.debug(
+                    "Applying migration by executing SQL script: %s",
+                    mig["sql"],
+                )
                 await self.conn.executescript(mig["sql"])
             elif "function" in mig:
                 func = mig["function"]
