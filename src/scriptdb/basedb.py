@@ -115,11 +115,14 @@ class BaseDB(abc.ABC):
         db = await YourDB.open("app.db")
     """
 
-    def __init__(self, db_path: str, auto_create: bool = True) -> None:
+    def __init__(
+        self, db_path: str, auto_create: bool = True, *, use_wal: bool = True
+    ) -> None:
         if not auto_create and not Path(db_path).exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
         self.db_path = db_path
         self.auto_create = auto_create
+        self.use_wal = use_wal
         self.conn: Optional[aiosqlite.Connection] = None
         self.initialized: bool = False
         self._periodic_specs: List[Tuple[int, Callable]] = []
@@ -139,10 +142,14 @@ class BaseDB(abc.ABC):
 
     @classmethod
     async def open(
-        cls: Type[T], db_path: str, *, auto_create: bool = True
+        cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True
     ) -> T:
         """
         Factory to create and initialize the database instance.
+
+        Parameters:
+            auto_create: Whether to create the database file if it does not exist.
+            use_wal: Enable SQLite's WAL journal mode. Pass ``False`` to disable.
 
         Returns:
             Initialized subclass instance of type T.
@@ -151,6 +158,7 @@ class BaseDB(abc.ABC):
             raise RuntimeError(f"Database file {db_path} does not exist")
         instance: T = cls(db_path)  # type: ignore
         instance.auto_create = auto_create  # type: ignore[attr-defined]
+        instance.use_wal = use_wal  # type: ignore[attr-defined]
         await instance.init()
         return instance
 
@@ -169,6 +177,8 @@ class BaseDB(abc.ABC):
         Initialize the database connection and apply pending migrations.
         """
         self.conn = await aiosqlite.connect(self.db_path)
+        if getattr(self, "use_wal", False):
+            await self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.row_factory = sqlite3.Row
         await self._ensure_migrations_table()
         await self._apply_migrations()

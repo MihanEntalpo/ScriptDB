@@ -13,6 +13,8 @@ pleasant developer experience while keeping the API minimal.
   let ScriptDB apply them once.
 * **Lightweight** – no server to run and no complicated setup; perfect for
   throw‑away scripts or small tools.
+* **WAL by default** – connections use SQLite's write-ahead logging mode;
+  disable with `use_wal=False` if rollback journals are required.
 
 Composite primary keys are not supported; each table must have a single-column primary key.
 
@@ -44,7 +46,7 @@ class MyDB(BaseDB):
         ]
 
 async def main():
-    db = await MyDB.open("app.db")
+    db = await MyDB.open("app.db")  # WAL journaling is enabled by default
     await db.execute("INSERT INTO items(name) VALUES(?)", ("apple",))
     row = await db.query_one("SELECT name FROM items")
     print(row["name"])  # -> apple
@@ -84,7 +86,7 @@ class MyDB(BaseDB):
         await self.execute("PRAGMA wal_checkpoint")
 
 async def main():
-    db = await MyDB.open("app.db")
+    db = await MyDB.open("app.db")  # pass use_wal=False to disable WAL
 
     # Insert many rows at once
     await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
