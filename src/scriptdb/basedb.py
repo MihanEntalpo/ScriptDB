@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import contextlib
+import re
 import aiosqlite
 from typing import Any, Callable, Dict, List, Set, Optional, Sequence, Iterable, Mapping, Union, Type, TypeVar, AsyncGenerator, Tuple
 
@@ -503,6 +504,102 @@ class BaseDB(abc.ABC):
         await cur.close()
         self._on_query()
         return row
+
+    @require_init
+    async def query_scalar(
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+    ) -> Any:
+        """Execute a query and return the first column of the first row.
+
+        Example:
+            count = await db.query_scalar(
+                "SELECT COUNT(*) FROM t WHERE x > ?", (0,)
+            )
+        """
+        row = await self.query_one(sql, params)
+        return None if row is None else row[0]
+
+    @require_init
+    async def query_column(
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+    ) -> List[Any]:
+        """Execute a query and return a list of the first column from each row.
+
+        Example:
+            ids = await db.query_column(
+                "SELECT id FROM t WHERE x > ?", (0,)
+            )
+        """
+        rows = await self.query_many(sql, params)
+        return [row[0] for row in rows]
+
+    @require_init
+    async def query_dict(
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        *,
+        key: Union[str, Callable[[sqlite3.Row], Any], None] = None,
+        value: Union[str, Callable[[sqlite3.Row], Any], None] = None,
+    ) -> Dict[Any, Any]:
+        """Execute a query and return a dictionary built from rows.
+
+        ``key`` may be a column name, a callable receiving each row, or ``None``
+        to automatically use the table's primary key column.
+
+        ``value`` controls the dictionary's values. When ``None`` (default) each
+        row is stored. If a string, the named column from each row is used. If a
+        callable, its return value is stored for each row.
+
+        Examples:
+            # Use primary key column automatically
+            users = await db.query_dict("SELECT * FROM users")
+
+            # Explicit column names for key and value
+            names = await db.query_dict(
+                "SELECT id, name FROM users", key="id", value="name"
+            )
+
+            # Callables for custom key and value
+            users = await db.query_dict(
+                "SELECT * FROM users",
+                key=lambda row: row["id"],
+                value=lambda row: f"{row['first_name']} {row['last_name']}",
+            )
+        """
+        rows = await self.query_many(sql, params)
+
+        if key is None:
+            match = re.search(
+                r"from\s+(?:\"([A-Za-z_][\w]*)\"|'([A-Za-z_][\w]*)'|([A-Za-z_][\w]*))",
+                sql,
+                re.IGNORECASE,
+            )
+            if not match:
+                raise ValueError(
+                    "Cannot determine table name from sql, so cannot deduce primary "
+                    "key, please provide non-empty 'key' argument"
+                )
+            table = match.group(1) or match.group(2) or match.group(3)
+            key = await self._primary_key(table)
+
+        if isinstance(key, str):
+            get_key = lambda row, k=key: row[k]
+        else:
+            get_key = key
+
+        if value is None:
+            get_value = lambda row: row
+        elif isinstance(value, str):
+            get_value = lambda row, v=value: row[v]
+        else:
+            get_value = value
+
+        return {get_key(row): get_value(row) for row in rows}
 
     @require_init
     async def close(self) -> None:

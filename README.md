@@ -121,6 +121,34 @@ await db.delete_one("t", pk)
 await db.delete_many("t", "x < ?", (0,))
 ```
 
+### Query helpers
+
+The library also offers helpers for common read patterns:
+
+```python
+# Get a single value
+count = await db.query_scalar("SELECT COUNT(*) FROM t")
+
+# Get a list from the first column of each row
+ids = await db.query_column("SELECT id FROM t ORDER BY id")
+
+# Build dictionaries from rows
+# Use primary key automatically
+users = await db.query_dict("SELECT * FROM users")
+
+# Explicit column names for key and value
+names = await db.query_dict(
+    "SELECT id, name FROM users", key="id", value="name"
+)
+
+# Callables for custom key and value
+full_names = await db.query_dict(
+    "SELECT * FROM users",
+    key=lambda r: r["id"],
+    value=lambda r: f"{r['first_name']} {r['last_name']}",
+)
+```
+
 ## Running tests
 
 ```bash
