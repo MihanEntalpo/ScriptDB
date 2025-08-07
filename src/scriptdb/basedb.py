@@ -574,10 +574,17 @@ class BaseDB(abc.ABC):
         rows = await self.query_many(sql, params)
 
         if key is None:
-            match = re.search(r"from\s+([A-Za-z_][\w]*)", sql, re.IGNORECASE)
+            match = re.search(
+                r"from\s+(?:\"([A-Za-z_][\w]*)\"|'([A-Za-z_][\w]*)'|([A-Za-z_][\w]*))",
+                sql,
+                re.IGNORECASE,
+            )
             if not match:
-                raise ValueError("Cannot determine table name; provide 'key'")
-            table = match.group(1)
+                raise ValueError(
+                    "Cannot determine table name from sql, so cannot deduce primary "
+                    "key, please provide non-empty 'key' argument"
+                )
+            table = match.group(1) or match.group(2) or match.group(3)
             key = await self._primary_key(table)
 
         if isinstance(key, str):

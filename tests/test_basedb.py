@@ -154,6 +154,17 @@ async def test_query_dict(db):
     )
     assert doubled == {1: 2, 2: 4}
 
+    # Quoted table name still resolves primary key
+    quoted = await db.query_dict('SELECT id, x FROM "t"')
+    assert set(quoted.keys()) == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_query_dict_requires_key_when_table_unknown(db):
+    with pytest.raises(ValueError) as exc:
+        await db.query_dict("SELECT 1")
+    assert "Cannot determine table name from sql" in str(exc.value)
+
 
 @pytest.mark.asyncio
 async def test_close_sets_initialized_false(tmp_path):
