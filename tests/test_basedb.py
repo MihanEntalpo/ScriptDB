@@ -118,6 +118,44 @@ async def test_query_one_none(db):
 
 
 @pytest.mark.asyncio
+async def test_query_scalar(db):
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,)])
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 2
+    missing = await db.query_scalar("SELECT x FROM t WHERE id=?", (999,))
+    assert missing is None
+
+
+@pytest.mark.asyncio
+async def test_query_column(db):
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
+    values = await db.query_column("SELECT x FROM t ORDER BY x")
+    assert values == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_query_dict(db):
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,)])
+
+    # Default to table's primary key and store whole rows
+    by_pk = await db.query_dict("SELECT id, x FROM t")
+    assert set(by_pk.keys()) == {1, 2}
+    assert by_pk[1]["x"] == 1
+
+    # Explicit column names for key and value
+    mapping = await db.query_dict("SELECT id, x FROM t", key="id", value="x")
+    assert mapping == {1: 1, 2: 2}
+
+    # Callables for custom key and value
+    doubled = await db.query_dict(
+        "SELECT id, x FROM t",
+        key=lambda r: r["x"],
+        value=lambda r: r["x"] * 2,
+    )
+    assert doubled == {1: 2, 2: 4}
+
+
+@pytest.mark.asyncio
 async def test_close_sets_initialized_false(tmp_path):
     db = await MyTestDB.open(str(tmp_path / "db.sqlite"))
     await db.close()
