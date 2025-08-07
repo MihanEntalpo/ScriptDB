@@ -236,12 +236,12 @@ class BaseDB(abc.ABC):
             cur = await self.conn.execute(sql)
             rows = await cur.fetchall()
             await cur.close()
-            for row in rows:
-                if row["pk"]:
-                    self._pk_cache[table] = row["name"]
-                    break
-            else:
+            pk_cols = [row["name"] for row in rows if row["pk"]]
+            if not pk_cols:
                 raise ValueError(f"Table {table} has no primary key")
+            if len(pk_cols) > 1:
+                raise ValueError(f"Table {table} has composite primary key")
+            self._pk_cache[table] = pk_cols[0]
         return self._pk_cache[table]
 
     def _on_query(self) -> None:
