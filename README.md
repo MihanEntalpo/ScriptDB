@@ -49,6 +49,55 @@ async def main():
     await db.close()
 ```
 
+## Usage examples
+
+The `BaseDB` API supports migrations and offers helpers for common operations
+and background tasks:
+
+```python
+from scriptdb import BaseDB, run_every_seconds, run_every_queries
+
+class MyDB(BaseDB):
+    def migrations(self):
+        return [
+            {"name": "init", "sql": """
+                CREATE TABLE t(
+                    id INTEGER PRIMARY KEY,
+                    x INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """},
+            {"name": "add_index", "sql": "CREATE INDEX idx_t_created_at ON t(created_at)"},
+            {"name": "create_meta", "sql": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)"},
+        ]
+
+    # Periodically remove rows older than a minute
+    @run_every_seconds(60)
+    async def cleanup(self):
+        await self.execute("DELETE FROM t WHERE x < 0")
+
+    # Write a checkpoint every 100 executed queries
+    @run_every_queries(100)
+    async def checkpoint(self):
+        await self.execute("PRAGMA wal_checkpoint")
+
+async def main():
+    db = await MyDB.open("app.db")
+
+    # Insert many rows at once
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
+
+    # Fetch all rows
+    rows = await db.query_many("SELECT x FROM t")
+    print([r["x"] for r in rows])
+
+    # Stream rows one by one
+    async for row in db.query_many_gen("SELECT x FROM t"):
+        print(row["x"])
+
+    await db.close()
+```
+
 ## Running tests
 
 ```bash
