@@ -41,7 +41,8 @@ def require_init(method: Callable) -> Callable:
 
 
 def run_every_seconds(seconds: int) -> Callable:
-    """Run decorated async method in background every ``seconds``.
+    """Decorator for async methods of :class:`BaseDB` subclasses to run in
+    background every ``seconds``.
 
     Useful for periodic cleaners or updaters that should work while the
     database connection stays open.
@@ -63,7 +64,8 @@ def run_every_seconds(seconds: int) -> Callable:
 
 
 def run_every_queries(queries: int) -> Callable:
-    """Run decorated async method after every ``queries`` database calls.
+    """Decorator for async methods of :class:`BaseDB` subclasses to run after
+    every ``queries`` database calls.
 
     Handy for tasks like checkpointing or vacuuming triggered by activity.
 

@@ -51,7 +51,8 @@ async def main():
 
 ## Usage examples
 
-The `BaseDB` API offers helpers for common operations and background tasks:
+The `BaseDB` API supports migrations and offers helpers for common operations
+and background tasks:
 
 ```python
 from scriptdb import BaseDB, run_every_seconds, run_every_queries
@@ -59,7 +60,15 @@ from scriptdb import BaseDB, run_every_seconds, run_every_queries
 class MyDB(BaseDB):
     def migrations(self):
         return [
-            {"name": "init", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)"}
+            {"name": "init", "sql": """
+                CREATE TABLE t(
+                    id INTEGER PRIMARY KEY,
+                    x INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """},
+            {"name": "add_index", "sql": "CREATE INDEX idx_t_created_at ON t(created_at)"},
+            {"name": "create_meta", "sql": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)"},
         ]
 
     # Periodically remove rows older than a minute
