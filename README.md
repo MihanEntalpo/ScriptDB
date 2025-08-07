@@ -149,6 +149,44 @@ full_names = await db.query_dict(
 )
 ```
 
+## Useful implementations
+
+### CacheDB
+
+`CacheDB` provides a simple key‑value store with optional expiration. Because
+it inherits from `BaseDB`, it is created and used the same way as other
+databases in the library.
+
+```python
+from scriptdb import CacheDB
+
+async def main():
+    cache = await CacheDB.open("cache.db")
+    await cache.set("answer", b"42", expire_sec=60)
+    if await cache.is_set("answer"):
+        print("cached!")
+    print(await cache.get("answer"))  # b"42"
+    await cache.close()
+```
+
+A value without `expire_sec` will be kept indefinitely. Use `is_set` to check for
+keys without retrieving their values. To easily cache
+function results, use the decorator:
+
+```python
+import asyncio
+from scriptdb.cachedb import cache
+
+@cache(expire_sec=30)
+async def slow():
+    await asyncio.sleep(1)
+    return 1
+```
+
+Subsequent calls within 30 seconds will return the cached result without
+executing the function. You can supply `key_func` to control how the cache key
+is generated.
+
 ## Running tests
 
 ```bash
