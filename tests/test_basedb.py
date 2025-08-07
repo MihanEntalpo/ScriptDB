@@ -182,6 +182,24 @@ async def test_require_init_decorator():
         await db.execute("SELECT 1")
 
 
+@pytest.mark.asyncio
+async def test_auto_create_false_missing_file(tmp_path):
+    db_file = tmp_path / "nope.sqlite"
+    with pytest.raises(RuntimeError):
+        await MyTestDB.open(str(db_file), auto_create=False)
+
+
+@pytest.mark.asyncio
+async def test_auto_create_false_existing_file(tmp_path):
+    db_file = tmp_path / "exists.sqlite"
+    db_file.touch()
+    db = await MyTestDB.open(str(db_file), auto_create=False)
+    try:
+        assert db.initialized is True
+    finally:
+        await db.close()
+
+
 class DuplicateNameDB(BaseDB):
     def migrations(self):
         return [
@@ -227,6 +245,25 @@ class MissingSqlFuncDB(BaseDB):
 async def test_missing_sql_and_function(tmp_path):
     with pytest.raises(ValueError):
         await MissingSqlFuncDB.open(str(tmp_path / "bad2.sqlite"))
+
+
+@pytest.mark.asyncio
+async def test_unknown_applied_migration(tmp_path):
+    db_file = tmp_path / "ghost.sqlite"
+    db = await MyTestDB.open(str(db_file))
+    await db.close()
+
+    import sqlite3
+
+    conn = sqlite3.connect(db_file)
+    conn.execute("INSERT INTO applied_migrations(name) VALUES('ghost')")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(ValueError) as exc:
+        await MyTestDB.open(str(db_file))
+    assert "ghost" in str(exc.value)
+    assert "inconsistent" in str(exc.value)
 
 
 class PeriodicDB(BaseDB):

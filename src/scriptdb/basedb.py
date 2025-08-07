@@ -5,8 +5,24 @@ import inspect
 import logging
 import contextlib
 import re
+from pathlib import Path
 import aiosqlite
-from typing import Any, Callable, Dict, List, Set, Optional, Sequence, Iterable, Mapping, Union, Type, TypeVar, AsyncGenerator, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Set,
+    Optional,
+    Sequence,
+    Iterable,
+    Mapping,
+    Union,
+    Type,
+    TypeVar,
+    AsyncGenerator,
+    Tuple,
+)
 
 # Type for self-returning class methods
 T = TypeVar('T', bound='BaseDB')
@@ -99,8 +115,11 @@ class BaseDB(abc.ABC):
         db = await YourDB.open("app.db")
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, auto_create: bool = True) -> None:
+        if not auto_create and not Path(db_path).exists():
+            raise RuntimeError(f"Database file {db_path} does not exist")
         self.db_path = db_path
+        self.auto_create = auto_create
         self.conn: Optional[aiosqlite.Connection] = None
         self.initialized: bool = False
         self._periodic_specs: List[Tuple[int, Callable]] = []
@@ -119,14 +138,19 @@ class BaseDB(abc.ABC):
                 self._query_hooks.append({"interval": queries, "method": attr, "count": 0})
 
     @classmethod
-    async def open(cls: Type[T], db_path: str) -> T:
+    async def open(
+        cls: Type[T], db_path: str, *, auto_create: bool = True
+    ) -> T:
         """
         Factory to create and initialize the database instance.
 
         Returns:
             Initialized subclass instance of type T.
         """
+        if not auto_create and not Path(db_path).exists():
+            raise RuntimeError(f"Database file {db_path} does not exist")
         instance: T = cls(db_path)  # type: ignore
+        instance.auto_create = auto_create  # type: ignore[attr-defined]
         await instance.init()
         return instance
 
@@ -200,6 +224,14 @@ class BaseDB(abc.ABC):
             raise ValueError(f"Duplicate migration names detected: {', '.join(sorted(dupes))}")
 
         applied = await self._applied_versions()
+        known = {n for n in names if n}
+        unknown = applied - known
+        if unknown:
+            missing = ", ".join(sorted(unknown))
+            raise ValueError(
+                f"Applied migration(s) not found: {missing}; database may be inconsistent"
+            )
+
         for mig in migrations_list:
             name = mig.get("name")
             if not name:
