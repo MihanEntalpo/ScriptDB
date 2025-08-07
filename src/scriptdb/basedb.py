@@ -106,6 +106,7 @@ class BaseDB(abc.ABC):
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_hooks: List[Dict[str, Any]] = []
         self._query_tasks: List[asyncio.Task] = []
+        self._pk_cache: Dict[str, str] = {}
 
         for name in dir(self):
             attr = getattr(self, name)
@@ -226,7 +227,24 @@ class BaseDB(abc.ABC):
             await self.conn.execute(sql, (name,))
             await self.conn.commit()
 
+    async def _primary_key(self, table: str) -> str:
+        """Return the name of ``table``'s primary key column, caching lookups."""
+        if table not in self._pk_cache:
+            sql = f"PRAGMA table_info({table})"
+            logger.debug("Executing SQL: %s", sql)
+            cur = await self.conn.execute(sql)
+            rows = await cur.fetchall()
+            await cur.close()
+            for row in rows:
+                if row["pk"]:
+                    self._pk_cache[table] = row["name"]
+                    break
+            else:
+                raise ValueError(f"Table {table} has no primary key")
+        return self._pk_cache[table]
+
     def _on_query(self) -> None:
+        """Run registered query hooks once their configured interval is reached."""
         for hook in self._query_hooks:
             hook["count"] += 1
             if hook["count"] >= hook["interval"]:
@@ -295,6 +313,126 @@ class BaseDB(abc.ABC):
         await self.conn.commit()
         self._on_query()
         return cur
+
+    @require_init
+    async def insert_one(self, table: str, row: Dict[str, Any]) -> Any:
+        """
+        Insert a single row into ``table``. Returns primary key of the new row.
+
+        Example:
+            pk = await db.insert_one("t", {"x": 1})
+            print(pk)
+        """
+        pk_col = await self._primary_key(table)
+        cols = ", ".join(row.keys())
+        placeholders = ", ".join([f":{c}" for c in row])
+        sql = (
+            f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) RETURNING {pk_col}"
+        )
+        cur = await self.conn.execute(sql, row)
+        res = await cur.fetchone()
+        await cur.close()
+        await self.conn.commit()
+        self._on_query()
+        return res[pk_col]
+
+    @require_init
+    async def insert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
+        """
+        Insert multiple rows into ``table``.
+
+        Example:
+            await db.insert_many("t", [{"x": 1}, {"x": 2}])
+        """
+        if not rows:
+            return
+        cols = rows[0].keys()
+        col_clause = ", ".join(cols)
+        placeholders = ", ".join([f":{c}" for c in cols])
+        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        await self.conn.executemany(sql, rows)
+        await self.conn.commit()
+        self._on_query()
+
+    @require_init
+    async def upsert_one(self, table: str, row: Dict[str, Any]) -> Any:
+        """
+        Insert or update a single row based on the table's primary key.
+        Returns the primary key of the affected row.
+
+        Example:
+            pk = await db.upsert_one("t", {"id": 1, "x": 2})
+        """
+        pk_col = await self._primary_key(table)
+        cols = row.keys()
+        col_clause = ", ".join(cols)
+        placeholders = ", ".join([f":{c}" for c in cols])
+        update_cols = [c for c in cols if c != pk_col]
+        set_clause = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        if set_clause:
+            sql += f" ON CONFLICT({pk_col}) DO UPDATE SET {set_clause}"
+        else:
+            sql += f" ON CONFLICT({pk_col}) DO NOTHING"
+        cur = await self.execute(sql, row)
+        return row.get(pk_col, cur.lastrowid)
+
+    @require_init
+    async def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
+        """
+        Insert or update multiple rows based on the table's primary key.
+
+        Example:
+            await db.upsert_many("t", [{"id": 1, "x": 2}, {"id": 2, "x": 3}])
+        """
+        if not rows:
+            return
+        pk_col = await self._primary_key(table)
+        cols = rows[0].keys()
+        col_clause = ", ".join(cols)
+        placeholders = ", ".join([f":{c}" for c in cols])
+        update_cols = [c for c in cols if c != pk_col]
+        set_clause = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        if set_clause:
+            sql += f" ON CONFLICT({pk_col}) DO UPDATE SET {set_clause}"
+        else:
+            sql += f" ON CONFLICT({pk_col}) DO NOTHING"
+        await self.conn.executemany(sql, rows)
+        await self.conn.commit()
+        self._on_query()
+
+    @require_init
+    async def delete_one(self, table: str, pk: Any) -> int:
+        """
+        Delete a single row from ``table`` by primary key. Returns number of
+        deleted rows (0 or 1).
+
+        Example:
+            await db.delete_one("t", 1)
+        """
+        pk_col = await self._primary_key(table)
+        sql = f"DELETE FROM {table} WHERE {pk_col} = ?"
+        cur = await self.execute(sql, (pk,))
+        return cur.rowcount
+
+    @require_init
+    async def delete_many(
+        self,
+        table: str,
+        where: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+    ) -> int:
+        """
+        Delete multiple rows from ``table`` matching ``where`` condition.
+        Returns number of deleted rows.
+
+        Example:
+            await db.delete_many("t", "x > ?", (10,))
+        """
+        sql = f"DELETE FROM {table} WHERE {where}"
+        cur = await self.execute(sql, params)
+        return cur.rowcount
 
     @require_init
     async def query_many(

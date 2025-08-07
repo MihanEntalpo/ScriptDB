@@ -53,6 +53,56 @@ async def test_execute_many_and_query_many(db):
 
 
 @pytest.mark.asyncio
+async def test_insert_one(db):
+    pk = await db.insert_one("t", {"x": 5})
+    row = await db.query_one("SELECT id, x FROM t WHERE id=?", (pk,))
+    assert row["x"] == 5
+
+
+@pytest.mark.asyncio
+async def test_insert_many(db):
+    await db.insert_many("t", [{"x": 1}, {"x": 2}])
+    rows = await db.query_many("SELECT x FROM t ORDER BY x")
+    assert [r["x"] for r in rows] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_delete_one(db):
+    pk = await db.insert_one("t", {"x": 1})
+    deleted = await db.delete_one("t", pk)
+    assert deleted == 1
+    row = await db.query_one("SELECT 1 FROM t WHERE id=?", (pk,))
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_delete_many(db):
+    await db.insert_many("t", [{"x": 1}, {"x": 2}, {"x": 3}])
+    deleted = await db.delete_many("t", "x >= ?", (2,))
+    assert deleted == 2
+    rows = await db.query_many("SELECT x FROM t ORDER BY x")
+    assert [r["x"] for r in rows] == [1]
+
+
+@pytest.mark.asyncio
+async def test_upsert_one(db):
+    pk = await db.upsert_one("t", {"id": 1, "x": 1})
+    assert pk == 1
+    pk = await db.upsert_one("t", {"id": 1, "x": 2})
+    assert pk == 1
+    row = await db.query_one("SELECT x FROM t WHERE id=?", (1,))
+    assert row["x"] == 2
+
+
+@pytest.mark.asyncio
+async def test_upsert_many(db):
+    await db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}])
+    await db.upsert_many("t", [{"id": 1, "x": 10}, {"id": 3, "x": 3}])
+    rows = await db.query_many("SELECT id, x FROM t ORDER BY id")
+    assert [(r["id"], r["x"]) for r in rows] == [(1, 10), (2, 2), (3, 3)]
+
+
+@pytest.mark.asyncio
 async def test_query_many_gen(db):
     await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []

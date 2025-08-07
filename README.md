@@ -98,6 +98,29 @@ async def main():
     await db.close()
 ```
 
+### Helper methods
+
+`BaseDB` includes convenience helpers for common insert, update and delete
+operations:
+
+```python
+# Insert one row and get its primary key
+pk = await db.insert_one("t", {"x": 1})
+
+# Insert many rows
+await db.insert_many("t", [{"x": 2}, {"x": 3}])
+
+# Upsert a single row
+await db.upsert_one("t", {"id": pk, "x": 10})
+
+# Upsert many rows
+await db.upsert_many("t", [{"id": 1, "x": 11}, {"id": 4, "x": 4}])
+
+# Delete rows
+await db.delete_one("t", pk)
+await db.delete_many("t", "x < ?", (0,))
+```
+
 ## Running tests
 
 ```bash
