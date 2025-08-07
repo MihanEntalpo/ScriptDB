@@ -39,6 +39,23 @@ async def test_open_applies_migrations(db):
 
 
 @pytest.mark.asyncio
+async def test_wal_mode_enabled(db):
+    mode = await db.query_scalar("PRAGMA journal_mode")
+    assert mode == "wal"
+
+
+@pytest.mark.asyncio
+async def test_wal_mode_can_be_disabled(tmp_path):
+    db_file = tmp_path / "nowal.db"
+    db = await MyTestDB.open(str(db_file), use_wal=False)
+    try:
+        mode = await db.query_scalar("PRAGMA journal_mode")
+        assert mode != "wal"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_execute_and_query(db):
     await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
     row = await db.query_one("SELECT x FROM t")
