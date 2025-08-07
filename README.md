@@ -14,6 +14,8 @@ pleasant developer experience while keeping the API minimal.
 * **Lightweight** – no server to run and no complicated setup; perfect for
   throw‑away scripts or small tools.
 
+Composite primary keys are not supported; each table must have a single-column primary key.
+
 ## Installation
 
 The project can be installed from source:
