@@ -42,16 +42,47 @@ from scriptdb import BaseDB
 class MyDB(BaseDB):
     def migrations(self):
         return [
-            {"name": "create_table", "sql": "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)"}
+            {
+                "name": "create_resources",
+                "sql": """
+                    CREATE TABLE resources(
+                        resource_id INTEGER PRIMARY KEY,
+                        referrer_url TEXT,
+                        url TEXT,
+                        status INTEGER,
+                        progress INTEGER,
+                        is_done INTEGER,
+                        content BLOB
+                    )
+                """,
+            }
         ]
 
 async def main():
-    db = await MyDB.open("app.db")  # WAL journaling is enabled by default
-    await db.execute("INSERT INTO items(name) VALUES(?)", ("apple",))
-    row = await db.query_one("SELECT name FROM items")
-    print(row["name"])  # -> apple
-    await db.close()
+    async with MyDB.open("app.db") as db:  # WAL journaling is enabled by default
+        await db.execute(
+            "INSERT INTO resources(url, status, progress, is_done) VALUES(?,?,?,?)",
+            ("https://example.com/data", 0, 0, 0),
+        )
+        row = await db.query_one("SELECT url FROM resources")
+        print(row["url"])  # -> https://example.com/data
+
+    # Manual open/close without a context manager
+    db = await MyDB.open("app.db")
+    try:
+        await db.execute(
+            "INSERT INTO resources(url, status, progress, is_done) VALUES(?,?,?,?)",
+            ("https://example.com/other", 0, 0, 0),
+        )
+    finally:
+        await db.close()
 ```
+
+Always close the database connection with `close()` or use the `async with`
+context manager as shown above. If you call `MyDB.open()` without a context
+manager, remember to `await db.close()` when finished. Leaving a database open
+may keep background tasks alive and prevent your application from exiting
+cleanly.
 
 ## Usage examples
 
@@ -64,21 +95,28 @@ from scriptdb import BaseDB, run_every_seconds, run_every_queries
 class MyDB(BaseDB):
     def migrations(self):
         return [
-            {"name": "init", "sql": """
-                CREATE TABLE t(
-                    id INTEGER PRIMARY KEY,
-                    x INTEGER NOT NULL,
-                    created_at INTEGER NOT NULL
-                )
-            """},
-            {"name": "add_index", "sql": "CREATE INDEX idx_t_created_at ON t(created_at)"},
+            {
+                "name": "init",
+                "sql": """
+                    CREATE TABLE resources(
+                        resource_id INTEGER PRIMARY KEY,
+                        referrer_url TEXT,
+                        url TEXT,
+                        status INTEGER,
+                        progress INTEGER,
+                        is_done INTEGER,
+                        content BLOB
+                    )
+                """,
+            },
+            {"name": "idx_status", "sql": "CREATE INDEX idx_resources_status ON resources(status)"},
             {"name": "create_meta", "sql": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)"},
         ]
 
-    # Periodically remove rows older than a minute
+    # Periodically remove finished resources
     @run_every_seconds(60)
     async def cleanup(self):
-        await self.execute("DELETE FROM t WHERE x < 0")
+        await self.execute("DELETE FROM resources WHERE is_done = 1")
 
     # Write a checkpoint every 100 executed queries
     @run_every_queries(100)
@@ -86,20 +124,21 @@ class MyDB(BaseDB):
         await self.execute("PRAGMA wal_checkpoint")
 
 async def main():
-    db = await MyDB.open("app.db")  # pass use_wal=False to disable WAL
+    async with MyDB.open("app.db") as db:  # pass use_wal=False to disable WAL
 
-    # Insert many rows at once
-    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
+        # Insert many resources at once
+        await db.execute_many(
+            "INSERT INTO resources(url) VALUES(?)",
+            [("https://a",), ("https://b",), ("https://c",)],
+        )
 
-    # Fetch all rows
-    rows = await db.query_many("SELECT x FROM t")
-    print([r["x"] for r in rows])
+        # Fetch all URLs
+        rows = await db.query_many("SELECT url FROM resources")
+        print([r["url"] for r in rows])
 
-    # Stream rows one by one
-    async for row in db.query_many_gen("SELECT x FROM t"):
-        print(row["x"])
-
-    await db.close()
+        # Stream resources one by one
+        async for row in db.query_many_gen("SELECT url FROM resources"):
+            print(row["url"])
 ```
 
 ### Helper methods
@@ -108,21 +147,30 @@ async def main():
 operations:
 
 ```python
-# Insert one row and get its primary key
-pk = await db.insert_one("t", {"x": 1})
+# Insert one resource and get its primary key
+pk = await db.insert_one("resources", {"url": "https://a"})
 
-# Insert many rows
-await db.insert_many("t", [{"x": 2}, {"x": 3}])
+# Insert many resources
+await db.insert_many("resources", [{"url": "https://b"}, {"url": "https://c"}])
 
-# Upsert a single row
-await db.upsert_one("t", {"id": pk, "x": 10})
+# Upsert a single resource
+await db.upsert_one("resources", {"resource_id": pk, "status": 200})
 
-# Upsert many rows
-await db.upsert_many("t", [{"id": 1, "x": 11}, {"id": 4, "x": 4}])
+# Upsert many resources
+await db.upsert_many(
+    "resources",
+    [
+        {"resource_id": 1, "status": 200},
+        {"resource_id": 2, "status": 404},
+    ],
+)
 
-# Delete rows
-await db.delete_one("t", pk)
-await db.delete_many("t", "x < ?", (0,))
+# Update selected columns in a resource
+await db.update_one("resources", pk, {"progress": 50})
+
+# Delete resources
+await db.delete_one("resources", pk)
+await db.delete_many("resources", "status = ?", (404,))
 ```
 
 ### Query helpers
@@ -131,25 +179,25 @@ The library also offers helpers for common read patterns:
 
 ```python
 # Get a single value
-count = await db.query_scalar("SELECT COUNT(*) FROM t")
+count = await db.query_scalar("SELECT COUNT(*) FROM resources")
 
 # Get a list from the first column of each row
-ids = await db.query_column("SELECT id FROM t ORDER BY id")
+ids = await db.query_column("SELECT resource_id FROM resources ORDER BY resource_id")
 
 # Build dictionaries from rows
 # Use primary key automatically
-users = await db.query_dict("SELECT * FROM users")
+resources = await db.query_dict("SELECT * FROM resources")
 
 # Explicit column names for key and value
-names = await db.query_dict(
-    "SELECT id, name FROM users", key="id", value="name"
+urls = await db.query_dict(
+    "SELECT resource_id, url FROM resources", key="resource_id", value="url"
 )
 
 # Callables for custom key and value
-full_names = await db.query_dict(
-    "SELECT * FROM users",
-    key=lambda r: r["id"],
-    value=lambda r: f"{r['first_name']} {r['last_name']}",
+status_by_url = await db.query_dict(
+    "SELECT * FROM resources",
+    key=lambda r: r["url"],
+    value=lambda r: r["status"],
 )
 ```
 
@@ -165,12 +213,11 @@ databases in the library.
 from scriptdb import CacheDB
 
 async def main():
-    cache = await CacheDB.open("cache.db")
-    await cache.set("answer", b"42", expire_sec=60)
-    if await cache.is_set("answer"):
-        print("cached!")
-    print(await cache.get("answer"))  # b"42"
-    await cache.close()
+    async with CacheDB.open("cache.db") as cache:
+        await cache.set("answer", b"42", expire_sec=60)
+        if await cache.is_set("answer"):
+            print("cached!")
+        print(await cache.get("answer"))  # b"42"
 ```
 
 A value without `expire_sec` will be kept indefinitely. Use `is_set` to check for
