@@ -21,11 +21,8 @@ class CompositePKDB(BaseDB):
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / "test.db"
-    db = await CompositePKDB.open(str(db_file))
-    try:
+    async with CompositePKDB.open(str(db_file)) as db:
         yield db
-    finally:
-        await db.close()
 
 
 @pytest.mark.asyncio
@@ -54,6 +51,13 @@ async def test_upsert_many_composite_primary_key(db):
 async def test_delete_one_composite_primary_key(db):
     with pytest.raises(ValueError) as exc:
         await db.delete_one("t", 1)
+    assert "composite primary key" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_update_one_composite_primary_key(db):
+    with pytest.raises(ValueError) as exc:
+        await db.update_one("t", 1, {"x": 4})
     assert "composite primary key" in str(exc.value)
 
 

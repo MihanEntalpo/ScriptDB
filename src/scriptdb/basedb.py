@@ -22,12 +22,52 @@ from typing import (
     TypeVar,
     AsyncGenerator,
     Tuple,
+    Generic,
 )
 
 # Type for self-returning class methods
 T = TypeVar('T', bound='BaseDB')
 
 logger = logging.getLogger(__name__)
+
+
+class _BaseDBOpenContext(Generic[T]):
+    """
+    Internal helper returned by :meth:`BaseDB.open`.
+
+    This object is both awaitable and an async context manager, allowing the
+    database to be opened with either ``await MyDB.open(...)`` or
+    ``async with MyDB.open(...) as db``. It lazily constructs and initializes
+    the database instance on first use and makes sure the instance is properly
+    closed when leaving the context manager.
+    """
+
+    def __init__(
+        self, cls: Type[T], db_path: str, auto_create: bool, use_wal: bool
+    ) -> None:
+        self._cls = cls
+        self._db_path = db_path
+        self._auto_create = auto_create
+        self._use_wal = use_wal
+        self._db: Optional[T] = None
+
+    async def _open(self) -> T:
+        instance: T = self._cls(self._db_path)  # type: ignore
+        instance.auto_create = self._auto_create  # type: ignore[attr-defined]
+        instance.use_wal = self._use_wal  # type: ignore[attr-defined]
+        await instance.init()
+        self._db = instance
+        return instance
+
+    def __await__(self):
+        return self._open().__await__()
+
+    async def __aenter__(self) -> T:
+        return await self._open()
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._db is not None:
+            await self._db.close()
 
 def require_init(method: Callable) -> Callable:
     """
@@ -141,26 +181,26 @@ class BaseDB(abc.ABC):
                 self._query_hooks.append({"interval": queries, "method": attr, "count": 0})
 
     @classmethod
-    async def open(
+    def open(
         cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True
-    ) -> T:
+    ) -> _BaseDBOpenContext[T]:
         """
-        Factory to create and initialize the database instance.
+        Factory returning an awaitable context manager for the database instance.
+
+        Usage:
+            ``db = await YourDB.open("app.db")`` or
+            ``async with YourDB.open("app.db") as db: ...``
 
         Parameters:
             auto_create: Whether to create the database file if it does not exist.
             use_wal: Enable SQLite's WAL journal mode. Pass ``False`` to disable.
 
         Returns:
-            Initialized subclass instance of type T.
+            Awaitable context manager yielding an initialized subclass instance of type T.
         """
         if not auto_create and not Path(db_path).exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        instance: T = cls(db_path)  # type: ignore
-        instance.auto_create = auto_create  # type: ignore[attr-defined]
-        instance.use_wal = use_wal  # type: ignore[attr-defined]
-        await instance.init()
-        return instance
+        return _BaseDBOpenContext(cls, db_path, auto_create, use_wal)
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
@@ -257,11 +297,11 @@ class BaseDB(abc.ABC):
                 await self.conn.executescript(mig["sql"])
             elif "function" in mig:
                 func = mig["function"]
-                if not callable(func):
-                    raise ValueError(f"'function' for migration {name} is not callable")
-                result = func(self.conn)
-                if asyncio.iscoroutine(result):
-                    await result
+                if not callable(func) or not inspect.iscoroutinefunction(func):
+                    raise TypeError(
+                        f"'function' for migration {name} must be an async function"
+                    )
+                await func(self, migrations_list, name)
             else:
                 raise ValueError(f"Migration {name} must have either 'sql' or 'function'")
 
@@ -444,6 +484,25 @@ class BaseDB(abc.ABC):
         await self.conn.executemany(sql, rows)
         await self.conn.commit()
         self._on_query()
+
+    @require_init
+    async def update_one(self, table: str, pk: Any, data: Dict[str, Any]) -> int:
+        """
+        Update a single row identified by primary key with the provided columns.
+        Returns number of updated rows (0 or 1).
+
+        Example:
+            await db.update_one("t", 1, {"x": 2})
+        """
+        if not data:
+            return 0
+        pk_col = await self._primary_key(table)
+        assignments = ", ".join([f"{c} = :{c}" for c in data])
+        params = dict(data)
+        params["pk"] = pk
+        sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :pk"
+        cur = await self.execute(sql, params)
+        return cur.rowcount
 
     @require_init
     async def delete_one(self, table: str, pk: Any) -> int:
@@ -662,3 +721,11 @@ class BaseDB(abc.ABC):
         if self.conn:
             await self.conn.close()
         self.initialized = False
+
+    async def __aenter__(self: T) -> T:
+        if not self.initialized:
+            await self.init()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()

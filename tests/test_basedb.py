@@ -3,6 +3,7 @@ import pytest
 import pytest_asyncio
 import sys
 import pathlib
+from typing import Dict, Any
 
 # Add the src directory to sys.path so we can import the package
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
@@ -19,11 +20,8 @@ class MyTestDB(BaseDB):
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / "test.db"
-    db = await MyTestDB.open(str(db_file))
-    try:
+    async with MyTestDB.open(str(db_file)) as db:
         yield db
-    finally:
-        await db.close()
 
 
 @pytest.mark.asyncio
@@ -120,6 +118,15 @@ async def test_upsert_many(db):
 
 
 @pytest.mark.asyncio
+async def test_update_one(db):
+    pk = await db.insert_one("t", {"x": 1})
+    updated = await db.update_one("t", pk, {"x": 5})
+    assert updated == 1
+    row = await db.query_one("SELECT x FROM t WHERE id=?", (pk,))
+    assert row["x"] == 5
+
+
+@pytest.mark.asyncio
 async def test_query_many_gen(db):
     await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []
@@ -181,6 +188,14 @@ async def test_query_dict_requires_key_when_table_unknown(db):
     with pytest.raises(ValueError) as exc:
         await db.query_dict("SELECT 1")
     assert "Cannot determine table name from sql" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_async_with_closes(tmp_path):
+    db_file = tmp_path / "ctx.db"
+    async with MyTestDB.open(str(db_file)) as db:
+        await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+    assert db.initialized is False
 
 
 @pytest.mark.asyncio
@@ -249,8 +264,48 @@ class NonCallableFuncDB(BaseDB):
 
 @pytest.mark.asyncio
 async def test_non_callable_function(tmp_path):
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         await NonCallableFuncDB.open(str(tmp_path / "bad.sqlite"))
+
+
+class NonAsyncFuncDB(BaseDB):
+    def migrations(self):
+        def sync_func(db, migrations, name):
+            pass
+
+        return [{"name": "bad", "function": sync_func}]
+
+
+@pytest.mark.asyncio
+async def test_non_async_function(tmp_path):
+    with pytest.raises(TypeError):
+        await NonAsyncFuncDB.open(str(tmp_path / "bad_sync.sqlite"))
+
+
+class AsyncFuncDB(BaseDB):
+    recorded: Dict[str, Any] = {}
+
+    def migrations(self):
+        async def func(db, migrations, name):
+            AsyncFuncDB.recorded = {
+                "db": db,
+                "migrations": migrations,
+                "name": name,
+            }
+            await db.conn.execute("CREATE TABLE t(x INTEGER)")
+
+        return [{"name": "good", "function": func}]
+
+
+@pytest.mark.asyncio
+async def test_async_function_called_with_args(tmp_path):
+    db = await AsyncFuncDB.open(str(tmp_path / "good.sqlite"))
+    try:
+        assert AsyncFuncDB.recorded["db"] is db
+        assert AsyncFuncDB.recorded["migrations"][0]["name"] == "good"
+        assert AsyncFuncDB.recorded["name"] == "good"
+    finally:
+        await db.close()
 
 
 class MissingSqlFuncDB(BaseDB):

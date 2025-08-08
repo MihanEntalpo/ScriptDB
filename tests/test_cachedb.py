@@ -12,11 +12,8 @@ from scriptdb import CacheDB
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / 'cache.db'
-    db = await CacheDB.open(str(db_file))
-    try:
+    async with CacheDB.open(str(db_file)) as db:
         yield db
-    finally:
-        await db.close()
 
 
 @pytest.mark.asyncio
@@ -109,3 +106,11 @@ async def test_cleanup_expired(db):
     await asyncio.sleep(5.5)
     count = await db.query_scalar('SELECT COUNT(*) FROM cache')
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_with_closes(tmp_path):
+    db_file = tmp_path / 'ctx.db'
+    async with CacheDB.open(str(db_file)) as db:
+        await db.set('a', 1)
+    assert db.initialized is False
