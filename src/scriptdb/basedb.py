@@ -409,15 +409,14 @@ class BaseDB(abc.ABC):
         pk_col = await self._primary_key(table)
         cols = ", ".join(row.keys())
         placeholders = ", ".join([f":{c}" for c in row])
-        sql = (
-            f"INSERT INTO {table} ({cols}) VALUES ({placeholders}) RETURNING {pk_col}"
-        )
+        sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
+        logger.debug("Executing SQL: %s; params: %s", sql, row)
         cur = await self.conn.execute(sql, row)
-        res = await cur.fetchone()
-        await cur.close()
         await self.conn.commit()
         self._on_query()
-        return res[pk_col]
+        pk = row.get(pk_col, cur.lastrowid)
+        await cur.close()
+        return pk
 
     @require_init
     async def insert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
@@ -450,15 +449,19 @@ class BaseDB(abc.ABC):
         cols = row.keys()
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
+        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
         update_cols = [c for c in cols if c != pk_col]
-        set_clause = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
-        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        if set_clause:
-            sql += f" ON CONFLICT({pk_col}) DO UPDATE SET {set_clause}"
-        else:
-            sql += f" ON CONFLICT({pk_col}) DO NOTHING"
-        cur = await self.execute(sql, row)
-        return row.get(pk_col, cur.lastrowid)
+        update_sql = ""
+        if update_cols:
+            assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
+            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+        try:
+            cur = await self.execute(insert_sql, row)
+            return row.get(pk_col, cur.lastrowid)
+        except sqlite3.IntegrityError:
+            if update_sql:
+                await self.execute(update_sql, row)
+            return row[pk_col]
 
     @require_init
     async def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
@@ -474,14 +477,20 @@ class BaseDB(abc.ABC):
         cols = rows[0].keys()
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
+        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
         update_cols = [c for c in cols if c != pk_col]
-        set_clause = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
-        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        if set_clause:
-            sql += f" ON CONFLICT({pk_col}) DO UPDATE SET {set_clause}"
-        else:
-            sql += f" ON CONFLICT({pk_col}) DO NOTHING"
-        await self.conn.executemany(sql, rows)
+        update_sql = ""
+        if update_cols:
+            assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
+            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+        for row in rows:
+            try:
+                logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
+                await self.conn.execute(insert_sql, row)
+            except sqlite3.IntegrityError:
+                if update_sql:
+                    logger.debug("Executing SQL: %s; params: %s", update_sql, row)
+                    await self.conn.execute(update_sql, row)
         await self.conn.commit()
         self._on_query()
 

@@ -75,6 +75,14 @@ async def test_insert_one(db):
 
 
 @pytest.mark.asyncio
+async def test_insert_one_with_pk(db):
+    pk = await db.insert_one("t", {"id": 7, "x": 9})
+    assert pk == 7
+    row = await db.query_one("SELECT id, x FROM t WHERE id=?", (7,))
+    assert row["x"] == 9
+
+
+@pytest.mark.asyncio
 async def test_insert_many(db):
     await db.insert_many("t", [{"x": 1}, {"x": 2}])
     rows = await db.query_many("SELECT x FROM t ORDER BY x")

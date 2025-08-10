@@ -18,6 +18,12 @@ pleasant developer experience while keeping the API minimal.
 
 Composite primary keys are not supported; each table must have a single-column primary key.
 
+## Requirements
+
+ScriptDB requires SQLite version **3.21.0** or newer. This covers SQLite
+releases bundled with modern Python builds, so no additional dependency is
+needed on most systems.
+
 ## Installation
 
 The project can be installed from source:

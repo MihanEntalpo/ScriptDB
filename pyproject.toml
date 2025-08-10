@@ -27,3 +27,6 @@ test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.20",
 ]
+
+[tool.scriptdb]
+minimum_sqlite_version = "3.21.0"
