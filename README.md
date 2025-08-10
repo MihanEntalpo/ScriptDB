@@ -43,9 +43,9 @@ class MyDB(BaseDB):
     def migrations(self):
         return [
             {
-                "name": "create_resources",
+                "name": "create_links",
                 "sql": """
-                    CREATE TABLE resources(
+                    CREATE TABLE links(
                         resource_id INTEGER PRIMARY KEY,
                         referrer_url TEXT,
                         url TEXT,
@@ -61,17 +61,17 @@ class MyDB(BaseDB):
 async def main():
     async with MyDB.open("app.db") as db:  # WAL journaling is enabled by default
         await db.execute(
-            "INSERT INTO resources(url, status, progress, is_done) VALUES(?,?,?,?)",
+            "INSERT INTO links(url, status, progress, is_done) VALUES(?,?,?,?)",
             ("https://example.com/data", 0, 0, 0),
         )
-        row = await db.query_one("SELECT url FROM resources")
+        row = await db.query_one("SELECT url FROM links")
         print(row["url"])  # -> https://example.com/data
 
     # Manual open/close without a context manager
     db = await MyDB.open("app.db")
     try:
         await db.execute(
-            "INSERT INTO resources(url, status, progress, is_done) VALUES(?,?,?,?)",
+            "INSERT INTO links(url, status, progress, is_done) VALUES(?,?,?,?)",
             ("https://example.com/other", 0, 0, 0),
         )
     finally:
@@ -98,7 +98,7 @@ class MyDB(BaseDB):
             {
                 "name": "init",
                 "sql": """
-                    CREATE TABLE resources(
+                    CREATE TABLE links(
                         resource_id INTEGER PRIMARY KEY,
                         referrer_url TEXT,
                         url TEXT,
@@ -109,14 +109,14 @@ class MyDB(BaseDB):
                     )
                 """,
             },
-            {"name": "idx_status", "sql": "CREATE INDEX idx_resources_status ON resources(status)"},
+            {"name": "idx_status", "sql": "CREATE INDEX idx_links_status ON links(status)"},
             {"name": "create_meta", "sql": "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)"},
         ]
 
-    # Periodically remove finished resources
+    # Periodically remove finished links
     @run_every_seconds(60)
     async def cleanup(self):
-        await self.execute("DELETE FROM resources WHERE is_done = 1")
+        await self.execute("DELETE FROM links WHERE is_done = 1")
 
     # Write a checkpoint every 100 executed queries
     @run_every_queries(100)
@@ -126,18 +126,18 @@ class MyDB(BaseDB):
 async def main():
     async with MyDB.open("app.db") as db:  # pass use_wal=False to disable WAL
 
-        # Insert many resources at once
+        # Insert many links at once
         await db.execute_many(
-            "INSERT INTO resources(url) VALUES(?)",
+            "INSERT INTO links(url) VALUES(?)",
             [("https://a",), ("https://b",), ("https://c",)],
         )
 
         # Fetch all URLs
-        rows = await db.query_many("SELECT url FROM resources")
+        rows = await db.query_many("SELECT url FROM links")
         print([r["url"] for r in rows])
 
-        # Stream resources one by one
-        async for row in db.query_many_gen("SELECT url FROM resources"):
+        # Stream links one by one
+        async for row in db.query_many_gen("SELECT url FROM links"):
             print(row["url"])
 ```
 
@@ -147,30 +147,30 @@ async def main():
 operations:
 
 ```python
-# Insert one resource and get its primary key
-pk = await db.insert_one("resources", {"url": "https://a"})
+# Insert one record and get its primary key
+pk = await db.insert_one("links", {"url": "https://a"})
 
-# Insert many resources
-await db.insert_many("resources", [{"url": "https://b"}, {"url": "https://c"}])
+# Insert many records
+await db.insert_many("links", [{"url": "https://b"}, {"url": "https://c"}])
 
-# Upsert a single resource
-await db.upsert_one("resources", {"resource_id": pk, "status": 200})
+# Upsert a single record
+await db.upsert_one("links", {"resource_id": pk, "status": 200})
 
-# Upsert many resources
+# Upsert many records
 await db.upsert_many(
-    "resources",
+    "links",
     [
         {"resource_id": 1, "status": 200},
         {"resource_id": 2, "status": 404},
     ],
 )
 
-# Update selected columns in a resource
-await db.update_one("resources", pk, {"progress": 50})
+# Update selected columns in a record
+await db.update_one("links", pk, {"progress": 50})
 
-# Delete resources
-await db.delete_one("resources", pk)
-await db.delete_many("resources", "status = ?", (404,))
+# Delete records
+await db.delete_one("links", pk)
+await db.delete_many("links", "status = ?", (404,))
 ```
 
 ### Query helpers
@@ -179,23 +179,23 @@ The library also offers helpers for common read patterns:
 
 ```python
 # Get a single value
-count = await db.query_scalar("SELECT COUNT(*) FROM resources")
+count = await db.query_scalar("SELECT COUNT(*) FROM links")
 
 # Get a list from the first column of each row
-ids = await db.query_column("SELECT resource_id FROM resources ORDER BY resource_id")
+ids = await db.query_column("SELECT resource_id FROM links ORDER BY resource_id")
 
 # Build dictionaries from rows
 # Use primary key automatically
-resources = await db.query_dict("SELECT * FROM resources")
+records = await db.query_dict("SELECT * FROM links")
 
 # Explicit column names for key and value
 urls = await db.query_dict(
-    "SELECT resource_id, url FROM resources", key="resource_id", value="url"
+    "SELECT resource_id, url FROM links", key="resource_id", value="url"
 )
 
 # Callables for custom key and value
 status_by_url = await db.query_dict(
-    "SELECT * FROM resources",
+    "SELECT * FROM links",
     key=lambda r: r["url"],
     value=lambda r: r["status"],
 )
