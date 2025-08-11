@@ -170,6 +170,7 @@ class BaseDB(abc.ABC):
         self._query_hooks: List[Dict[str, Any]] = []
         self._query_tasks: List[asyncio.Task] = []
         self._pk_cache: Dict[str, str] = {}
+        self._upsert_lock = asyncio.Lock()
 
         for name in dir(self):
             attr = getattr(self, name)
@@ -448,30 +449,31 @@ class BaseDB(abc.ABC):
         Example:
             pk = await db.upsert_one("t", {"id": 1, "x": 2})
         """
-        pk_col = await self._primary_key(table)
-        cols = row.keys()
-        col_clause = ", ".join(cols)
-        placeholders = ", ".join([f":{c}" for c in cols])
-        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        async with self._upsert_lock:
+            pk_col = await self._primary_key(table)
+            cols = row.keys()
+            col_clause = ", ".join(cols)
+            placeholders = ", ".join([f":{c}" for c in cols])
+            insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
 
-        # When no primary key is supplied, behave like a simple insert.
-        if pk_col not in row:
-            cur = await self.execute(insert_sql, row)
-            return cur.lastrowid
+            # When no primary key is supplied, behave like a simple insert.
+            if pk_col not in row:
+                cur = await self.execute(insert_sql, row)
+                return cur.lastrowid
 
-        update_cols = [c for c in cols if c != pk_col]
-        update_sql = ""
-        if update_cols:
-            assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+            update_cols = [c for c in cols if c != pk_col]
+            update_sql = ""
+            if update_cols:
+                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
+                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
 
-        try:
-            cur = await self.execute(insert_sql, row)
-            return row.get(pk_col, cur.lastrowid)
-        except sqlite3.IntegrityError:
-            if update_sql:
-                await self.execute(update_sql, row)
-            return row[pk_col]
+            try:
+                cur = await self.execute(insert_sql, row)
+                return row.get(pk_col, cur.lastrowid)
+            except sqlite3.IntegrityError:
+                if update_sql:
+                    await self.execute(update_sql, row)
+                return row[pk_col]
 
     @require_init
     async def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
@@ -481,28 +483,29 @@ class BaseDB(abc.ABC):
         Example:
             await db.upsert_many("t", [{"id": 1, "x": 2}, {"id": 2, "x": 3}])
         """
-        if not rows:
-            return
-        pk_col = await self._primary_key(table)
-        cols = rows[0].keys()
-        col_clause = ", ".join(cols)
-        placeholders = ", ".join([f":{c}" for c in cols])
-        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        update_cols = [c for c in cols if c != pk_col]
-        update_sql = ""
-        if update_cols:
-            assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
-        for row in rows:
-            try:
-                logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
-                await self.conn.execute(insert_sql, row)
-            except sqlite3.IntegrityError:
-                if update_sql:
-                    logger.debug("Executing SQL: %s; params: %s", update_sql, row)
-                    await self.conn.execute(update_sql, row)
-        await self.conn.commit()
-        self._on_query()
+        async with self._upsert_lock:
+            if not rows:
+                return
+            pk_col = await self._primary_key(table)
+            cols = rows[0].keys()
+            col_clause = ", ".join(cols)
+            placeholders = ", ".join([f":{c}" for c in cols])
+            insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+            update_cols = [c for c in cols if c != pk_col]
+            update_sql = ""
+            if update_cols:
+                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
+                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+            for row in rows:
+                try:
+                    logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
+                    await self.conn.execute(insert_sql, row)
+                except sqlite3.IntegrityError:
+                    if update_sql:
+                        logger.debug("Executing SQL: %s; params: %s", update_sql, row)
+                        await self.conn.execute(update_sql, row)
+            await self.conn.commit()
+            self._on_query()
 
     @require_init
     async def update_one(self, table: str, pk: Any, data: Dict[str, Any]) -> int:

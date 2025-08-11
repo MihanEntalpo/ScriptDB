@@ -134,6 +134,32 @@ async def test_upsert_many(db):
 
 
 @pytest.mark.asyncio
+async def test_upsert_waits_for_lock(db):
+    await db._upsert_lock.acquire()
+    t1 = asyncio.create_task(db.upsert_one("t", {"id": 1, "x": 1}))
+    await asyncio.sleep(0.01)
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+    db._upsert_lock.release()
+    await t1
+    row = await db.query_one("SELECT x FROM t WHERE id=1")
+    assert row["x"] == 1
+
+
+@pytest.mark.asyncio
+async def test_upsert_many_waits_for_lock(db):
+    await db._upsert_lock.acquire()
+    t1 = asyncio.create_task(db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}]))
+    await asyncio.sleep(0.01)
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+    db._upsert_lock.release()
+    await t1
+    rows = await db.query_many("SELECT id, x FROM t ORDER BY id")
+    assert [(r["id"], r["x"]) for r in rows] == [(1, 1), (2, 2)]
+
+
+@pytest.mark.asyncio
 async def test_update_one(db):
     pk = await db.insert_one("t", {"x": 1})
     updated = await db.update_one("t", pk, {"x": 5})
