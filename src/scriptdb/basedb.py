@@ -442,6 +442,9 @@ class BaseDB(abc.ABC):
         Insert or update a single row based on the table's primary key.
         Returns the primary key of the affected row.
 
+        If the primary key column is omitted, the row is inserted and the
+        generated key is returned.
+
         Example:
             pk = await db.upsert_one("t", {"id": 1, "x": 2})
         """
@@ -450,11 +453,18 @@ class BaseDB(abc.ABC):
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
         insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+
+        # When no primary key is supplied, behave like a simple insert.
+        if pk_col not in row:
+            cur = await self.execute(insert_sql, row)
+            return cur.lastrowid
+
         update_cols = [c for c in cols if c != pk_col]
         update_sql = ""
         if update_cols:
             assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
             update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+
         try:
             cur = await self.execute(insert_sql, row)
             return row.get(pk_col, cur.lastrowid)

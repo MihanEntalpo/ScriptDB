@@ -118,6 +118,14 @@ async def test_upsert_one(db):
 
 
 @pytest.mark.asyncio
+async def test_upsert_one_without_pk(db):
+    pk = await db.upsert_one("t", {"x": 1})
+    assert pk == 1
+    row = await db.query_one("SELECT id, x FROM t WHERE id=?", (pk,))
+    assert row["x"] == 1
+
+
+@pytest.mark.asyncio
 async def test_upsert_many(db):
     await db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}])
     await db.upsert_many("t", [{"id": 1, "x": 10}, {"id": 3, "x": 3}])
