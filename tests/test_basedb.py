@@ -13,7 +13,17 @@ from scriptdb import BaseDB, run_every_seconds, run_every_queries
 class MyTestDB(BaseDB):
     def migrations(self):
         return [
-            {"name": "create_table", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)"}
+            {
+                "name": "create_table",
+                "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)",
+            },
+            {
+                "name": "add_y_and_index",
+                "sqls": [
+                    "ALTER TABLE t ADD COLUMN y INTEGER",
+                    "CREATE INDEX idx_t_y ON t(y)",
+                ],
+            },
         ]
 
 
@@ -34,6 +44,16 @@ async def test_open_applies_migrations(db):
         "SELECT name FROM applied_migrations WHERE name='create_table'"
     )
     assert mig is not None
+
+
+@pytest.mark.asyncio
+async def test_sqls_migration_applied(db):
+    cols = await db.query_column("SELECT name FROM pragma_table_info('t')")
+    assert "y" in cols
+    idx = await db.query_one(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_t_y'",
+    )
+    assert idx is not None
 
 
 @pytest.mark.asyncio
@@ -359,6 +379,35 @@ class MissingSqlFuncDB(BaseDB):
 async def test_missing_sql_and_function(tmp_path):
     with pytest.raises(ValueError):
         await MissingSqlFuncDB.open(str(tmp_path / "bad2.sqlite"))
+
+
+class BadSqlsDB(BaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"},
+            {"name": "bad", "sqls": "ALTER TABLE t ADD COLUMN y INTEGER"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_must_be_sequence(tmp_path):
+    with pytest.raises(TypeError):
+        await BadSqlsDB.open(str(tmp_path / "bad_sqls.sqlite"))
+
+
+class FailingMigrationDB(BaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"},
+            {"name": "bad", "sql": "INSERT INTO t(nonexistent) VALUES(1)"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_migration_error_wrapped(tmp_path):
+    with pytest.raises(RuntimeError) as excinfo:
+        await FailingMigrationDB.open(str(tmp_path / "fail.sqlite"))
+    assert "Error while applying migration bad" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

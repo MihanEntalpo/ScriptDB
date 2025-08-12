@@ -150,8 +150,10 @@ class BaseDB(abc.ABC):
     Subclasses must implement migrations() -> List[Dict[str, Any]]:
       each dict must have:
         - "name": str (unique identifier)
-        - either "sql": str
-          or     "function": Callable[[aiosqlite.Connection], Any]
+        - exactly one of:
+            * "sql": str
+            * "sqls": Sequence[str]
+            * "function": Callable[[aiosqlite.Connection], Any]
 
     Usage:
         db = await YourDB.open("app.db")
@@ -224,7 +226,10 @@ class BaseDB(abc.ABC):
         Return ordered list of migration dicts.
         Each dict must include:
           - name: str
-          - either sql: str or function: Callable
+          - exactly one of:
+              * sql: str
+              * sqls: Sequence[str]
+              * function: Callable
         """
         raise NotImplementedError
 
@@ -305,21 +310,56 @@ class BaseDB(abc.ABC):
             if name in applied:
                 continue
 
-            if "sql" in mig:
-                logger.debug(
-                    "Applying migration by executing SQL script: %s",
-                    mig["sql"],
+            kinds = [k for k in ("sql", "sqls", "function") if k in mig]
+            if len(kinds) != 1:
+                raise ValueError(
+                    f"Migration {name} must have exactly one of 'sql', 'sqls', or 'function'"
                 )
-                await self.conn.executescript(mig["sql"])
-            elif "function" in mig:
+
+            if "sql" in mig:
+                try:
+                    logger.debug(
+                        "Applying migration by executing SQL script: %s",
+                        mig["sql"],
+                    )
+                    await self.conn.executescript(mig["sql"])
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Error while applying migration {name}: {exc}"
+                    ) from exc
+            elif "sqls" in mig:
+                sqls = mig["sqls"]
+                if (
+                    not isinstance(sqls, Sequence)
+                    or isinstance(sqls, (str, bytes))
+                    or not all(isinstance(s, str) for s in sqls)
+                ):
+                    raise TypeError(
+                        f"'sqls' for migration {name} must be a sequence of strings"
+                    )
+                try:
+                    for sql in sqls:
+                        logger.debug(
+                            "Applying migration by executing SQL script: %s",
+                            sql,
+                        )
+                        await self.conn.executescript(sql)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Error while applying migration {name}: {exc}"
+                    ) from exc
+            else:
                 func = mig["function"]
                 if not callable(func) or not inspect.iscoroutinefunction(func):
                     raise TypeError(
                         f"'function' for migration {name} must be an async function"
                     )
-                await func(self, migrations_list, name)
-            else:
-                raise ValueError(f"Migration {name} must have either 'sql' or 'function'")
+                try:
+                    await func(self, migrations_list, name)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Error while applying migration {name}: {exc}"
+                    ) from exc
 
             sql = "INSERT INTO applied_migrations(name) VALUES (?)"
             logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
