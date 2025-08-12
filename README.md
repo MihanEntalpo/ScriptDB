@@ -9,7 +9,7 @@ pleasant developer experience while keeping the API minimal.
 
 * **Async first** – built on top of [`aiosqlite`](https://github.com/omnilib/aiosqlite)
   for non‑blocking database access.
-* **Migrations** – declare migrations as SQL snippets or Python callables and
+* **Migrations** – declare migrations as SQL snippet(s) or Python callables and
   let ScriptDB apply them once.
 * **Lightweight** – no server to run and no complicated setup; perfect for
   throw‑away scripts or small tools.
@@ -58,10 +58,18 @@ class MyDB(BaseDB):
                         status INTEGER,
                         progress INTEGER,
                         is_done INTEGER,
-                        content BLOB
-                    )
+                    content BLOB
+                )
                 """,
-            }
+            },
+            {
+                "name": "add_created_idx",
+                # run multiple statements sequentially
+                "sqls": [
+                    "ALTER TABLE links ADD COLUMN created_at TEXT",  # new column
+                    "CREATE INDEX idx_links_created_at ON links(created_at)",  # index
+                ],
+            },
         ]
 
 async def main():
