@@ -1,6 +1,7 @@
 import abc
 import sqlite3
 import asyncio
+import signal
 import inspect
 import logging
 import contextlib
@@ -56,6 +57,7 @@ class _BaseDBOpenContext(Generic[T]):
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
         await instance.init()
+        instance._register_signal_handlers()
         self._db = instance
         return instance
 
@@ -171,6 +173,8 @@ class BaseDB(abc.ABC):
         self._query_tasks: List[asyncio.Task] = []
         self._pk_cache: Dict[str, str] = {}
         self._upsert_lock = asyncio.Lock()
+        self._signal_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._signals_registered = False
 
         for name in dir(self):
             attr = getattr(self, name)
@@ -180,6 +184,17 @@ class BaseDB(abc.ABC):
             queries = getattr(attr, "_run_every_queries", None)
             if queries is not None:
                 self._query_hooks.append({"interval": queries, "method": attr, "count": 0})
+
+    def _register_signal_handlers(self) -> None:
+        if self._signals_registered:
+            return
+        loop = asyncio.get_running_loop()
+        def _handler() -> None:
+            asyncio.create_task(self.close())
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _handler)
+        self._signal_loop = loop
+        self._signals_registered = True
 
     @classmethod
     def open(
@@ -729,6 +744,11 @@ class BaseDB(abc.ABC):
         """
         Close the database connection.
         """
+        if self._signals_registered and self._signal_loop is not None:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                self._signal_loop.remove_signal_handler(sig)
+            self._signals_registered = False
+            self._signal_loop = None
         for task in self._periodic_tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -747,6 +767,7 @@ class BaseDB(abc.ABC):
     async def __aenter__(self: T) -> T:
         if not self.initialized:
             await self.init()
+        self._register_signal_handlers()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
