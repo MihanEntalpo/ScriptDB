@@ -6,7 +6,12 @@ import logging
 import contextlib
 import inspect
 import re
-import aiosqlite
+try:
+    import aiosqlite
+except ImportError as exc:
+    raise ImportError(
+        "aiosqlite is required for async support; install with 'scriptdb[async]'"
+    ) from exc
 from pathlib import Path
 from typing import (
     Any,

@@ -8,9 +8,7 @@ if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:  # pragma: no cover - env g
     raise RuntimeError("ScriptDB requires SQLite >= 3.21.0")
 
 from .abstractdb import AbstractBaseDB, run_every_seconds, run_every_queries
-from .asyncdb import AsyncBaseDB
 from .syncdb import SyncBaseDB
-from .cachedb import AsyncCacheDB, SyncCacheDB
 
 __all__ = [
     "AbstractBaseDB",
@@ -21,4 +19,38 @@ __all__ = [
     "AsyncCacheDB",
     "SyncCacheDB",
 ]
-__version__ = "0.1.0"
+__version__ = "1.0.2"
+
+
+# Lazy-load objects that require optional dependencies so that importing
+# :mod:`scriptdb` does not immediately pull them in.  The synchronous API is
+# always available, while the async and cache implementations are resolved on
+# first access.
+_LAZY_ATTRS = {
+    "AsyncBaseDB": ("asyncdb", "AsyncBaseDB"),
+    "AsyncCacheDB": ("cachedb", "AsyncCacheDB"),
+    "SyncCacheDB": ("cachedb", "SyncCacheDB"),
+}
+
+
+def __getattr__(name: str):
+    """Dynamically import optional components.
+
+    ``AsyncBaseDB`` depends on :mod:`aiosqlite`, so we delay importing it until
+    needed.  The cache database variants live in :mod:`cachedb` and are loaded
+    on demand as well.  All other public names are imported eagerly above.
+    """
+
+    if name in _LAZY_ATTRS:
+        module_name, attr_name = _LAZY_ATTRS[name]
+        try:
+            module = __import__(f"{__name__}.{module_name}", fromlist=[attr_name])
+        except ImportError as exc:  # pragma: no cover - runtime guard
+            if name == "AsyncBaseDB":
+                raise ImportError(
+                    "aiosqlite is required for async support; install with 'scriptdb[async]'"
+                ) from exc
+            raise
+        return getattr(module, attr_name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
