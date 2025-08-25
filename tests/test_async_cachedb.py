@@ -6,13 +6,13 @@ import pathlib
 
 # add src path
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-from scriptdb import CacheDB
+from scriptdb import AsyncCacheDB
 
 
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / 'cache.db'
-    async with CacheDB.open(str(db_file)) as db:
+    async with AsyncCacheDB.open(str(db_file)) as db:
         yield db
 
 
@@ -111,6 +111,6 @@ async def test_cleanup_expired(db):
 @pytest.mark.asyncio
 async def test_async_with_closes(tmp_path):
     db_file = tmp_path / 'ctx.db'
-    async with CacheDB.open(str(db_file)) as db:
+    async with AsyncCacheDB.open(str(db_file)) as db:
         await db.set('a', 1)
     assert db.initialized is False
