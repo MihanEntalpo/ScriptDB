@@ -1,14 +1,16 @@
 # ScriptDB
 
-ScriptDB is a tiny asynchronous wrapper around SQLite with built‑in migration
-support. It is designed for small integration scripts and ETL jobs where using
-an external database would be unnecessary. The project aims to provide a
-pleasant developer experience while keeping the API minimal.
+ScriptDB is a tiny wrapper around SQLite with built‑in migration
+support. It can be used asynchronously with `AsyncBaseDB` or
+synchronously with `SyncBaseDB`. ScriptDB is designed for small
+integration scripts and ETL jobs where using an external database would be
+unnecessary. The project aims to provide a pleasant developer experience
+while keeping the API minimal.
 
 ## Features
 
-* **Async first** – built on top of [`aiosqlite`](https://github.com/omnilib/aiosqlite)
-  for non‑blocking database access.
+* **Async and sync** – choose between the async [`aiosqlite`](https://github.com/omnilib/aiosqlite)
+  backend or the synchronous stdlib `sqlite3` backend.
 * **Migrations** – declare migrations as SQL snippet(s) or Python callables and
   let ScriptDB apply them once.
 * **Lightweight** – no server to run and no complicated setup; perfect for
@@ -38,14 +40,23 @@ Once published to PyPI it will be installable with:
 pip install scriptdb
 ```
 
-## Quick start
+## Sync or Async
 
-Create a subclass of `BaseDB` and provide a list of migrations:
+Both the asynchronous and synchronous interfaces expose the same API.
+The only difference is whether methods are coroutines (`AsyncBaseDB` and
+`AsyncCacheDB`) or regular blocking functions (`SyncBaseDB` and
+`SyncCacheDB`). Import `BaseDB` and `CacheDB` from `scriptdb.asyncdb` for async
+usage or from `scriptdb.syncdb` for synchronous usage, or explicitly import
+`AsyncBaseDB`/`SyncBaseDB` or `AsyncCacheDB`/`SyncCacheDB` to avoid ambiguity.
+
+## Asynchronous quick start
+
+Create a subclass of `AsyncBaseDB` and provide a list of migrations:
 
 ```python
-from scriptdb import BaseDB
+from scriptdb import AsyncBaseDB
 
-class MyDB(BaseDB):
+class MyDB(AsyncBaseDB):
     def migrations(self):
         return [
             {
@@ -98,15 +109,71 @@ manager, remember to `await db.close()` when finished. Leaving a database open
 may keep background tasks alive and prevent your application from exiting
 cleanly.
 
+## Synchronous quick start
+
+Create a subclass of `SyncBaseDB` for blocking use:
+
+```python
+from scriptdb import SyncBaseDB
+
+class MyDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "create_links",
+                "sql": """
+                    CREATE TABLE links(
+                        resource_id INTEGER PRIMARY KEY,
+                        referrer_url TEXT,
+                        url TEXT,
+                        status INTEGER,
+                        progress INTEGER,
+                        is_done INTEGER,
+                        content BLOB
+                    )
+                """,
+            },
+            {
+                "name": "add_created_idx",
+                "sqls": [
+                    "ALTER TABLE links ADD COLUMN created_at TEXT",  # new column
+                    "CREATE INDEX idx_links_created_at ON links(created_at)",  # index
+                ],
+            },
+        ]
+
+with MyDB.open("app.db") as db:  # WAL journaling is enabled by default
+    db.execute(
+        "INSERT INTO links(url, status, progress, is_done) VALUES(?,?,?,?)",
+        ("https://example.com/data", 0, 0, 0),
+    )
+    row = db.query_one("SELECT url FROM links")
+    print(row["url"])  # -> https://example.com/data
+
+# Manual open/close without a context manager
+db = MyDB.open("app.db")
+try:
+    db.execute(
+        "INSERT INTO links(url, status, progress, is_done) VALUES(?,?,?,?)",
+        ("https://example.com/other", 0, 0, 0),
+    )
+finally:
+    db.close()
+```
+
+Always close the database connection with `close()` or use the `with`
+context manager as shown above. Leaving a database open may keep background
+tasks alive and prevent your application from exiting cleanly.
+
 ## Usage examples
 
-The `BaseDB` API supports migrations and offers helpers for common operations
+The `AsyncBaseDB` API supports migrations and offers helpers for common operations
 and background tasks:
 
 ```python
-from scriptdb import BaseDB, run_every_seconds, run_every_queries
+from scriptdb import AsyncBaseDB, run_every_seconds, run_every_queries
 
-class MyDB(BaseDB):
+class MyDB(AsyncBaseDB):
     def migrations(self):
         return [
             {
@@ -219,33 +286,47 @@ status_by_url = await db.query_dict(
 
 ### CacheDB
 
-`CacheDB` provides a simple key‑value store with optional expiration. Because
-it inherits from `BaseDB`, it is created and used the same way as other
-databases in the library.
+`AsyncCacheDB` and `SyncCacheDB` provide a simple key‑value store with optional
+expiration.
 
 ```python
-from scriptdb import CacheDB
+from scriptdb import AsyncCacheDB
 
 async def main():
-    async with CacheDB.open("cache.db") as cache:
+    async with AsyncCacheDB.open("cache.db") as cache:
         await cache.set("answer", b"42", expire_sec=60)
         if await cache.is_set("answer"):
             print("cached!")
         print(await cache.get("answer"))  # b"42"
 ```
 
+```python
+from scriptdb import SyncCacheDB
+
+with SyncCacheDB.open("cache.db") as cache:
+    cache.set("answer", b"42", expire_sec=60)
+    if cache.is_set("answer"):
+        print("cached!")
+    print(cache.get("answer"))  # b"42"
+```
+
 A value without `expire_sec` will be kept indefinitely. Use `is_set` to check for
-keys without retrieving their values. To easily cache
-function results, use the decorator:
+keys without retrieving their values. To easily cache function results, use the
+`cache` decorator method from a cache instance:
 
 ```python
 import asyncio
-from scriptdb.cachedb import cache
+from scriptdb import AsyncCacheDB
 
-@cache(expire_sec=30)
-async def slow():
-    await asyncio.sleep(1)
-    return 1
+async def main():
+    async with AsyncCacheDB.open("cache.db") as cache:
+
+        @cache.cache(expire_sec=30)
+        async def slow():
+            await asyncio.sleep(1)
+            return 1
+
+        await slow()
 ```
 
 Subsequent calls within 30 seconds will return the cached result without

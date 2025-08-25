@@ -2,12 +2,12 @@ import abc
 import sqlite3
 import asyncio
 import signal
-import inspect
 import logging
 import contextlib
+import inspect
 import re
-from pathlib import Path
 import aiosqlite
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -26,15 +26,15 @@ from typing import (
     Generic,
 )
 
-# Type for self-returning class methods
-T = TypeVar('T', bound='BaseDB')
+from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
+
+T = TypeVar('T', bound='AsyncBaseDB')
 
 logger = logging.getLogger(__name__)
 
 
-class _BaseDBOpenContext(Generic[T]):
-    """
-    Internal helper returned by :meth:`BaseDB.open`.
+class _AsyncDBOpenContext(Generic[T]):
+    """Internal helper returned by :meth:`AsyncBaseDB.open`.
 
     This object is both awaitable and an async context manager, allowing the
     database to be opened with either ``await MyDB.open(...)`` or
@@ -71,79 +71,8 @@ class _BaseDBOpenContext(Generic[T]):
         if self._db is not None:
             await self._db.close()
 
-def require_init(method: Callable) -> Callable:
-    """
-    Decorator to ensure the database is initialized before method execution.
 
-    Raises:
-        RuntimeError: if `init()` was not called before invocation.
-    """
-    if inspect.iscoroutinefunction(method):
-        async def async_wrapper(self, *args, **kwargs):
-            if not getattr(self, 'initialized', False) or self.conn is None:
-                raise RuntimeError("you didn't call init")
-            return await method(self, *args, **kwargs)
-        return async_wrapper
-    elif inspect.isasyncgenfunction(method):
-        async def async_gen_wrapper(self, *args, **kwargs):
-            if not getattr(self, 'initialized', False) or self.conn is None:
-                raise RuntimeError("you didn't call init")
-            async for item in method(self, *args, **kwargs):
-                yield item
-        return async_gen_wrapper
-    else:
-        def sync_wrapper(self, *args, **kwargs):
-            if not getattr(self, 'initialized', False) or self.conn is None:
-                raise RuntimeError("you didn't call init")
-            return method(self, *args, **kwargs)
-        return sync_wrapper
-
-
-def run_every_seconds(seconds: int) -> Callable:
-    """Decorator for async methods of :class:`BaseDB` subclasses to run in
-    background every ``seconds``.
-
-    Useful for periodic cleaners or updaters that should work while the
-    database connection stays open.
-
-    Example:
-        class MyDB(BaseDB):
-            @run_every_seconds(60)
-            async def cleanup(self):
-                ...  # cleanup every minute
-    """
-
-    def decorator(method: Callable) -> Callable:
-        if not inspect.iscoroutinefunction(method):
-            raise TypeError("run_every_seconds can only decorate async functions")
-        setattr(method, "_run_every_seconds", seconds)
-        return method
-
-    return decorator
-
-
-def run_every_queries(queries: int) -> Callable:
-    """Decorator for async methods of :class:`BaseDB` subclasses to run after
-    every ``queries`` database calls.
-
-    Handy for tasks like checkpointing or vacuuming triggered by activity.
-
-    Example:
-        class MyDB(BaseDB):
-            @run_every_queries(1000)
-            async def checkpoint(self):
-                await self.execute("PRAGMA wal_checkpoint")
-    """
-
-    def decorator(method: Callable) -> Callable:
-        if not inspect.iscoroutinefunction(method):
-            raise TypeError("run_every_queries can only decorate async functions")
-        setattr(method, "_run_every_queries", queries)
-        return method
-
-    return decorator
-
-class BaseDB(abc.ABC):
+class AsyncBaseDB(AbstractBaseDB):
     """
     Abstract async SQLite-backed database with migration support via aiosqlite.
 
@@ -162,30 +91,13 @@ class BaseDB(abc.ABC):
     def __init__(
         self, db_path: str, auto_create: bool = True, *, use_wal: bool = True
     ) -> None:
-        if not auto_create and not Path(db_path).exists():
-            raise RuntimeError(f"Database file {db_path} does not exist")
-        self.db_path = db_path
-        self.auto_create = auto_create
-        self.use_wal = use_wal
+        super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: Optional[aiosqlite.Connection] = None
-        self.initialized: bool = False
-        self._periodic_specs: List[Tuple[int, Callable]] = []
         self._periodic_tasks: List[asyncio.Task] = []
-        self._query_hooks: List[Dict[str, Any]] = []
         self._query_tasks: List[asyncio.Task] = []
-        self._pk_cache: Dict[str, str] = {}
         self._upsert_lock = asyncio.Lock()
         self._signal_loop: Optional[asyncio.AbstractEventLoop] = None
         self._signals_registered = False
-
-        for name in dir(self):
-            attr = getattr(self, name)
-            seconds = getattr(attr, "_run_every_seconds", None)
-            if seconds is not None:
-                self._periodic_specs.append((seconds, attr))
-            queries = getattr(attr, "_run_every_queries", None)
-            if queries is not None:
-                self._query_hooks.append({"interval": queries, "method": attr, "count": 0})
 
     def _register_signal_handlers(self) -> None:
         if self._signals_registered:
@@ -201,7 +113,7 @@ class BaseDB(abc.ABC):
     @classmethod
     def open(
         cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True
-    ) -> _BaseDBOpenContext[T]:
+    ) -> _AsyncDBOpenContext[T]:
         """
         Factory returning an awaitable context manager for the database instance.
 
@@ -218,7 +130,7 @@ class BaseDB(abc.ABC):
         """
         if not auto_create and not Path(db_path).exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _BaseDBOpenContext(cls, db_path, auto_create, use_wal)
+        return _AsyncDBOpenContext(cls, db_path, auto_create, use_wal)
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
@@ -267,14 +179,7 @@ class BaseDB(abc.ABC):
             task.add_done_callback(_cleanup)
 
     async def _ensure_migrations_table(self) -> None:
-        sql = (
-            """
-            CREATE TABLE IF NOT EXISTS applied_migrations (
-                name       TEXT PRIMARY KEY,
-                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            """
-        )
+        sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         await self.conn.execute(sql)
         await self.conn.commit()
@@ -812,3 +717,9 @@ class BaseDB(abc.ABC):
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
+
+
+
+from .cachedb import AsyncCacheDB
+BaseDB = AsyncBaseDB
+CacheDB = AsyncCacheDB

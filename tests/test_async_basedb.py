@@ -7,10 +7,10 @@ from typing import Dict, Any
 
 # Add the src directory to sys.path so we can import the package
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-from scriptdb import BaseDB, run_every_seconds, run_every_queries
+from scriptdb import AsyncBaseDB, run_every_seconds, run_every_queries
 
 
-class MyTestDB(BaseDB):
+class MyTestDB(AsyncBaseDB):
     def migrations(self):
         return [
             {
@@ -294,7 +294,7 @@ async def test_auto_create_false_existing_file(tmp_path):
         await db.close()
 
 
-class DuplicateNameDB(BaseDB):
+class DuplicateNameDB(AsyncBaseDB):
     def migrations(self):
         return [
             {"name": "m1", "sql": "CREATE TABLE t(x INTEGER)"},
@@ -308,7 +308,7 @@ async def test_duplicate_migration_names(tmp_path):
         await DuplicateNameDB.open(str(tmp_path / "dup.sqlite"))
 
 
-class MissingNameDB(BaseDB):
+class MissingNameDB(AsyncBaseDB):
     def migrations(self):
         return [{"sql": "CREATE TABLE t(x INTEGER)"}]
 
@@ -319,7 +319,7 @@ async def test_missing_migration_name(tmp_path):
         await MissingNameDB.open(str(tmp_path / "miss.sqlite"))
 
 
-class NonCallableFuncDB(BaseDB):
+class NonCallableFuncDB(AsyncBaseDB):
     def migrations(self):
         return [{"name": "bad", "function": "not_callable"}]
 
@@ -330,7 +330,7 @@ async def test_non_callable_function(tmp_path):
         await NonCallableFuncDB.open(str(tmp_path / "bad.sqlite"))
 
 
-class NonAsyncFuncDB(BaseDB):
+class NonAsyncFuncDB(AsyncBaseDB):
     def migrations(self):
         def sync_func(db, migrations, name):
             pass
@@ -344,7 +344,7 @@ async def test_non_async_function(tmp_path):
         await NonAsyncFuncDB.open(str(tmp_path / "bad_sync.sqlite"))
 
 
-class AsyncFuncDB(BaseDB):
+class AsyncFuncDB(AsyncBaseDB):
     recorded: Dict[str, Any] = {}
 
     def migrations(self):
@@ -370,7 +370,7 @@ async def test_async_function_called_with_args(tmp_path):
         await db.close()
 
 
-class MissingSqlFuncDB(BaseDB):
+class MissingSqlFuncDB(AsyncBaseDB):
     def migrations(self):
         return [{"name": "bad"}]
 
@@ -381,7 +381,7 @@ async def test_missing_sql_and_function(tmp_path):
         await MissingSqlFuncDB.open(str(tmp_path / "bad2.sqlite"))
 
 
-class BadSqlsDB(BaseDB):
+class BadSqlsDB(AsyncBaseDB):
     def migrations(self):
         return [
             {"name": "create", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"},
@@ -395,7 +395,7 @@ async def test_sqls_must_be_sequence(tmp_path):
         await BadSqlsDB.open(str(tmp_path / "bad_sqls.sqlite"))
 
 
-class FailingMigrationDB(BaseDB):
+class FailingMigrationDB(AsyncBaseDB):
     def migrations(self):
         return [
             {"name": "create", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"},
@@ -429,7 +429,7 @@ async def test_unknown_applied_migration(tmp_path):
     assert "inconsistent" in str(exc.value)
 
 
-class PeriodicDB(BaseDB):
+class PeriodicDB(AsyncBaseDB):
     def __init__(self, path: str):
         super().__init__(path)
         self.calls = 0
@@ -452,7 +452,7 @@ async def test_run_every_seconds(tmp_path):
         await db.close()
 
 
-class QueryHookDB(BaseDB):
+class QueryHookDB(AsyncBaseDB):
     def __init__(self, path: str):
         super().__init__(path)
         self.calls = 0
