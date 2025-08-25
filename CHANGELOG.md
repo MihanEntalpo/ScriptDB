@@ -6,6 +6,7 @@
 
 * Moved aiosqlite to [async] dependency
 * Added Changelog, updated README.md
+* Added gitlab actions
 
 ## 1.0.0 - First working version
 
