@@ -1,10 +1,10 @@
 # ScriptDB
 
 ScriptDB is a tiny wrapper around SQLite with built‑in migration
-support. It can be used asynchronously with `AsyncBaseDB` or
-synchronously with `SyncBaseDB`. ScriptDB is designed for small
-integration scripts and ETL jobs where using an external database would be
-unnecessary. The project aims to provide a pleasant developer experience
+support. It can be used asynchronously or synchronously. 
+ScriptDB is designed for small integration scripts and ETL jobs 
+where using an external database would be unnecessary. 
+The project aims to provide a pleasant developer experience
 while keeping the API minimal.
 
 ## Features
@@ -28,16 +28,18 @@ needed on most systems.
 
 ## Installation
 
-The project can be installed from source:
+Project can be installed with:
 
-```bash
-pip install .
-```
-
-Once published to PyPI it will be installable with:
+To use sync implementation
 
 ```bash
 pip install scriptdb
+```
+
+To use async version (installs aiosqlite)
+
+```bash
+pip install scriptdb[async]
 ```
 
 ## Development
@@ -47,7 +49,7 @@ Create and activate a virtual environment in the repository root:
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -e .[test]
+pip install -e .[async,test]
 ```
 
 ## Sync or Async
