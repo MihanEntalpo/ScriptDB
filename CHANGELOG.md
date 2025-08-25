@@ -1,5 +1,13 @@
 # Changelog of the ScriptDB
 
+## 1.0.2 - Lazy async imports
+
+### Added
+
+* Deferred loading of async components so `SyncBaseDB` works without `aiosqlite`
+* Clear guidance when `aiosqlite` is missing
+* Tests covering public exports and sync-only operation
+
 ## 1.0.1 - Slight changes
 
 ### Added
