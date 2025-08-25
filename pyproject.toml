@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptdb"
-version = "0.1.0"
-description = "Base asynchronous SQLite database with migration support"
+version = "1.0.0"
+description = "Simple SQLite sync/async wrapper with migration support for use in scripts"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "ScriptDB Contributors"}]
