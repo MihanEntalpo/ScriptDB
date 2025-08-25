@@ -40,6 +40,16 @@ Once published to PyPI it will be installable with:
 pip install scriptdb
 ```
 
+## Development
+
+Create and activate a virtual environment in the repository root:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -e .[test]
+```
+
 ## Sync or Async
 
 Both the asynchronous and synchronous interfaces expose the same API.
