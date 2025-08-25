@@ -1,4 +1,4 @@
-k#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 usage() { echo "Usage: $(basename "$0") {prod|test}"; exit 2; }
