@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptdb"
-version = "1.0.2"
+version = "1.0.3"
 description = "Simple SQLite sync/async wrapper with migration support for use in ad-hoc scripts"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -12,6 +12,16 @@ authors = [{name = "ScriptDB Contributors"}]
 requires-python = ">=3.8"
 keywords = ["sqlite", "migrations", "asyncio", "database"]
 dependencies = [
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 [project.urls]
@@ -21,6 +31,9 @@ Repository = "https://github.com/MihanEntalpo/ScriptDB"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"scriptdb" = ["py.typed"]
+
 [project.optional-dependencies]
 async = [
     "aiosqlite>=0.19"
@@ -29,8 +42,21 @@ test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.20",
     "aiosqlite>=0.19",
+    "ruff>=0.0.275",
+    "mypy>=1.0,<1.11",
 ]
 
 
 [tool.scriptdb]
 minimum_sqlite_version = "3.21.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.mypy]
+python_version = "3.8"
+ignore_missing_imports = true

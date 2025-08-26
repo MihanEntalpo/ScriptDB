@@ -85,7 +85,10 @@ class AsyncCacheDB(AsyncBaseDB):
     async def keys(self, key_mask: str) -> List[str]:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
         return await self.query_column(
-            "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)",
+            (
+                "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' "
+                "AND (expire_utc IS NULL OR expire_utc > ?)"
+            ),
             (pattern, datetime.now(timezone.utc).isoformat()),
         )
 
@@ -199,7 +202,10 @@ class SyncCacheDB(SyncBaseDB):
     def keys(self, key_mask: str) -> List[str]:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
         return self.query_column(
-            "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)",
+            (
+                "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' "
+                "AND (expire_utc IS NULL OR expire_utc > ?)"
+            ),
             (pattern, datetime.now(timezone.utc).isoformat()),
         )
 

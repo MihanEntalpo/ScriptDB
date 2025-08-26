@@ -27,7 +27,6 @@ from typing import (
     Type,
     TypeVar,
     AsyncGenerator,
-    Tuple,
     Generic,
 )
 
@@ -97,7 +96,7 @@ class AsyncBaseDB(AbstractBaseDB):
         self, db_path: str, auto_create: bool = True, *, use_wal: bool = True
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
-        self.conn: Optional[aiosqlite.Connection] = None
+        self.conn: Union[aiosqlite.Connection, None] = None
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_tasks: List[asyncio.Task] = []
         self._upsert_lock = asyncio.Lock()
@@ -184,12 +183,14 @@ class AsyncBaseDB(AbstractBaseDB):
             task.add_done_callback(_cleanup)
 
     async def _ensure_migrations_table(self) -> None:
+        assert self.conn is not None
         sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         await self.conn.execute(sql)
         await self.conn.commit()
 
     async def _applied_versions(self) -> Set[str]:
+        assert self.conn is not None
         sql = "SELECT name FROM applied_migrations"
         logger.debug("Executing SQL: %s", sql)
         cur = await self.conn.execute(sql)
@@ -198,34 +199,11 @@ class AsyncBaseDB(AbstractBaseDB):
         return {row["name"] for row in rows}
 
     async def _apply_migrations(self) -> None:
+        assert self.conn is not None
         migrations_list = self.migrations()
-        names = [mig.get("name") for mig in migrations_list]
-        dupes = {name for name in names if names.count(name) > 1}
-        if dupes:
-            raise ValueError(f"Duplicate migration names detected: {', '.join(sorted(dupes))}")
-
         applied = await self._applied_versions()
-        known = {n for n in names if n}
-        unknown = applied - known
-        if unknown:
-            missing = ", ".join(sorted(unknown))
-            raise ValueError(
-                f"Applied migration(s) not found: {missing}; database may be inconsistent"
-            )
-
-        for mig in migrations_list:
-            name = mig.get("name")
-            if not name:
-                raise ValueError("Migration entry missing 'name'")
-            if name in applied:
-                continue
-
-            kinds = [k for k in ("sql", "sqls", "function") if k in mig]
-            if len(kinds) != 1:
-                raise ValueError(
-                    f"Migration {name} must have exactly one of 'sql', 'sqls', or 'function'"
-                )
-
+        for mig in self._validate_migrations(migrations_list, applied):
+            name = mig["name"]
             if "sql" in mig:
                 try:
                     logger.debug(
@@ -279,6 +257,7 @@ class AsyncBaseDB(AbstractBaseDB):
     async def _primary_key(self, table: str) -> str:
         """Return the name of ``table``'s primary key column, caching lookups."""
         if table not in self._pk_cache:
+            assert self.conn is not None
             sql = f"PRAGMA table_info({table})"
             logger.debug("Executing SQL: %s", sql)
             cur = await self.conn.execute(sql)
@@ -333,6 +312,7 @@ class AsyncBaseDB(AbstractBaseDB):
             )
             print(cur.lastrowid)
         """
+        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
@@ -357,6 +337,7 @@ class AsyncBaseDB(AbstractBaseDB):
             )
             print(cur.rowcount)
         """
+        assert self.conn is not None
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = await self.conn.executemany(sql, seq_params)
         await self.conn.commit()
@@ -376,6 +357,7 @@ class AsyncBaseDB(AbstractBaseDB):
         cols = ", ".join(row.keys())
         placeholders = ", ".join([f":{c}" for c in row])
         sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
+        assert self.conn is not None
         logger.debug("Executing SQL: %s; params: %s", sql, row)
         cur = await self.conn.execute(sql, row)
         await self.conn.commit()
@@ -398,6 +380,7 @@ class AsyncBaseDB(AbstractBaseDB):
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
         sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        assert self.conn is not None
         await self.conn.executemany(sql, rows)
         await self.conn.commit()
         self._on_query()
@@ -461,6 +444,7 @@ class AsyncBaseDB(AbstractBaseDB):
             if update_cols:
                 assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
                 update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+            assert self.conn is not None
             for row in rows:
                 try:
                     logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
@@ -539,10 +523,11 @@ class AsyncBaseDB(AbstractBaseDB):
             for row in rows:
                 print(row["x"])
         """
+        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
-        rows = await cur.fetchall()
+        rows = list(await cur.fetchall())
         await cur.close()
         self._on_query()
         return rows
@@ -564,6 +549,7 @@ class AsyncBaseDB(AbstractBaseDB):
         """
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
+        assert self.conn is not None
         async with self.conn.execute(sql, ps) as cur:
             self._on_query()
             async for row in cur:
@@ -585,6 +571,7 @@ class AsyncBaseDB(AbstractBaseDB):
             if row:
                 print(row["x"])
         """
+        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
@@ -676,16 +663,25 @@ class AsyncBaseDB(AbstractBaseDB):
             key = await self._primary_key(table)
 
         if isinstance(key, str):
-            get_key = lambda row, k=key: row[k]
+            key_str = key
+
+            def get_key(row: sqlite3.Row) -> Any:
+                return row[key_str]
         else:
-            get_key = key
+            def get_key(row: sqlite3.Row) -> Any:
+                return key(row)
 
         if value is None:
-            get_value = lambda row: row
+            def get_value(row: sqlite3.Row) -> Any:
+                return row
         elif isinstance(value, str):
-            get_value = lambda row, v=value: row[v]
+            value_str = value
+
+            def get_value(row: sqlite3.Row) -> Any:
+                return row[value_str]
         else:
-            get_value = value
+            def get_value(row: sqlite3.Row) -> Any:
+                return value(row)
 
         return {get_key(row): get_value(row) for row in rows}
 
@@ -725,6 +721,5 @@ class AsyncBaseDB(AbstractBaseDB):
 
 
 
-from .cachedb import AsyncCacheDB
+# Alias for backward compatibility
 BaseDB = AsyncBaseDB
-CacheDB = AsyncCacheDB
