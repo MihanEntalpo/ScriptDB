@@ -15,7 +15,7 @@ def test_syncdb_works_without_aiosqlite(monkeypatch):
     for mod in [m for m in list(sys.modules) if m.startswith("scriptdb") or m == "aiosqlite"]:
         monkeypatch.delitem(sys.modules, mod, raising=False)
 
-    import scriptdb
+    import scriptdb  # noqa: F401
 
     from scriptdb import SyncBaseDB
 
@@ -27,4 +27,4 @@ def test_syncdb_works_without_aiosqlite(monkeypatch):
         db.execute("SELECT 1")
 
     with pytest.raises(ImportError):
-        from scriptdb import AsyncBaseDB
+        from scriptdb import AsyncBaseDB  # noqa: F401

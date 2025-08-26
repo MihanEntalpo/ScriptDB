@@ -1,5 +1,12 @@
 # Changelog of the ScriptDB
 
+## 1.0.3 - Typing and linting
+
+### Added
+
+* PyPI classifiers and packaged type hints via `py.typed`
+* Ruff and mypy linting with CI integration and developer docs
+
 ## 1.0.2 - Lazy async imports
 
 ### Added

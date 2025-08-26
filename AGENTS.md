@@ -10,6 +10,6 @@ regular Python package.
 
 - Keep changes focused; avoid modifying unrelated files.
 - Install test dependencies with `pip install -e .[test]` before running tests.
-- Run the test suite with `pytest` before committing.
+- Run `ruff check .`, `mypy src/scriptdb`, and `pytest` before committing.
 - The codebase uses the `src/` layout with the package located at `src/scriptdb`.
 

@@ -7,8 +7,8 @@ MIN_SQLITE_VERSION = (3, 21, 0)
 if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:  # pragma: no cover - env guard
     raise RuntimeError("ScriptDB requires SQLite >= 3.21.0")
 
-from .abstractdb import AbstractBaseDB, run_every_seconds, run_every_queries
-from .syncdb import SyncBaseDB
+from .abstractdb import AbstractBaseDB, run_every_seconds, run_every_queries  # noqa: E402
+from .syncdb import SyncBaseDB  # noqa: E402
 
 __all__ = [
     "AbstractBaseDB",

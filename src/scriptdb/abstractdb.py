@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import abc
 import inspect
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Mapping, Union, Type, TypeVar, Generator, Tuple
+from typing import Any, Callable, Dict, List, Tuple, TypeVar, Union, Set, TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    import sqlite3
+    import aiosqlite
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +72,7 @@ class AbstractBaseDB(abc.ABC):
         self.db_path = db_path
         self.auto_create = auto_create
         self.use_wal = use_wal
-        self.conn = None
+        self.conn: Union[sqlite3.Connection, aiosqlite.Connection, None] = None
         self.initialized: bool = False
         self._periodic_specs: List[Tuple[int, Callable]] = []
         self._query_hooks: List[Dict[str, Any]] = []
@@ -84,3 +90,34 @@ class AbstractBaseDB(abc.ABC):
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
         raise NotImplementedError
+
+    def _validate_migrations(
+        self, migrations_list: List[Dict[str, Any]], applied: Set[str]
+    ) -> List[Dict[str, Any]]:
+        names: List[str] = []
+        for mig in migrations_list:
+            name = mig.get("name")
+            if not isinstance(name, str):
+                raise ValueError("Migration entry missing 'name'")
+            names.append(name)
+        dupes = {name for name in names if names.count(name) > 1}
+        if dupes:
+            raise ValueError(
+                f"Duplicate migration names detected: {', '.join(sorted(dupes))}"
+            )
+        unknown = applied - set(names)
+        if unknown:
+            missing = ", ".join(sorted(unknown))
+            raise ValueError(
+                f"Applied migration(s) not found: {missing}; database may be inconsistent"
+            )
+        validated: List[Dict[str, Any]] = []
+        for mig in migrations_list:
+            kinds = [k for k in ("sql", "sqls", "function") if k in mig]
+            if len(kinds) != 1:
+                raise ValueError(
+                    f"Migration {mig['name']} must have exactly one of 'sql', 'sqls', or 'function'"
+                )
+            if mig["name"] not in applied:
+                validated.append(mig)
+        return validated
