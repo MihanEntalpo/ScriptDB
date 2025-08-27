@@ -28,6 +28,7 @@ from typing import (
     TypeVar,
     AsyncGenerator,
     Generic,
+    cast,
 )
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
@@ -96,7 +97,7 @@ class AsyncBaseDB(AbstractBaseDB):
         self, db_path: str, auto_create: bool = True, *, use_wal: bool = True
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
-        self.conn: Union[aiosqlite.Connection, None] = None
+        self.conn: aiosqlite.Connection = cast(aiosqlite.Connection, None)
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_tasks: List[asyncio.Task] = []
         self._upsert_lock = asyncio.Lock()
@@ -183,14 +184,12 @@ class AsyncBaseDB(AbstractBaseDB):
             task.add_done_callback(_cleanup)
 
     async def _ensure_migrations_table(self) -> None:
-        assert self.conn is not None
         sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         await self.conn.execute(sql)
         await self.conn.commit()
 
     async def _applied_versions(self) -> Set[str]:
-        assert self.conn is not None
         sql = "SELECT name FROM applied_migrations"
         logger.debug("Executing SQL: %s", sql)
         cur = await self.conn.execute(sql)
@@ -199,7 +198,6 @@ class AsyncBaseDB(AbstractBaseDB):
         return {row["name"] for row in rows}
 
     async def _apply_migrations(self) -> None:
-        assert self.conn is not None
         migrations_list = self.migrations()
         applied = await self._applied_versions()
         for mig in self._validate_migrations(migrations_list, applied):
@@ -254,10 +252,10 @@ class AsyncBaseDB(AbstractBaseDB):
             await self.conn.execute(sql, (name,))
             await self.conn.commit()
 
+    @require_init
     async def _primary_key(self, table: str) -> str:
         """Return the name of ``table``'s primary key column, caching lookups."""
         if table not in self._pk_cache:
-            assert self.conn is not None
             sql = f"PRAGMA table_info({table})"
             logger.debug("Executing SQL: %s", sql)
             cur = await self.conn.execute(sql)
@@ -312,7 +310,6 @@ class AsyncBaseDB(AbstractBaseDB):
             )
             print(cur.lastrowid)
         """
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
@@ -337,7 +334,6 @@ class AsyncBaseDB(AbstractBaseDB):
             )
             print(cur.rowcount)
         """
-        assert self.conn is not None
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = await self.conn.executemany(sql, seq_params)
         await self.conn.commit()
@@ -357,7 +353,6 @@ class AsyncBaseDB(AbstractBaseDB):
         cols = ", ".join(row.keys())
         placeholders = ", ".join([f":{c}" for c in row])
         sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
-        assert self.conn is not None
         logger.debug("Executing SQL: %s; params: %s", sql, row)
         cur = await self.conn.execute(sql, row)
         await self.conn.commit()
@@ -380,7 +375,6 @@ class AsyncBaseDB(AbstractBaseDB):
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
         sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        assert self.conn is not None
         await self.conn.executemany(sql, rows)
         await self.conn.commit()
         self._on_query()
@@ -444,7 +438,6 @@ class AsyncBaseDB(AbstractBaseDB):
             if update_cols:
                 assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
                 update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
-            assert self.conn is not None
             for row in rows:
                 try:
                     logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
@@ -523,7 +516,6 @@ class AsyncBaseDB(AbstractBaseDB):
             for row in rows:
                 print(row["x"])
         """
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
@@ -549,7 +541,6 @@ class AsyncBaseDB(AbstractBaseDB):
         """
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
-        assert self.conn is not None
         async with self.conn.execute(sql, ps) as cur:
             self._on_query()
             async for row in cur:
@@ -571,7 +562,6 @@ class AsyncBaseDB(AbstractBaseDB):
             if row:
                 print(row["x"])
         """
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
