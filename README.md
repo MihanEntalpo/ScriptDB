@@ -362,7 +362,7 @@ is generated.
 ## Running tests
 
 ```bash
-pytest
+pytest --cov=scriptdb --cov-report=term-missing
 ```
 
 ## Contributing
@@ -387,11 +387,12 @@ source venv/bin/activate
 pip install -e .[async,test]
 ```
 
-Before committing, ensure code passes the linters and type checks:
+Before committing, ensure code passes the linters, type checks, and tests with coverage:
 
 ```bash
 ruff check .
 mypy src/scriptdb
+pytest --cov=scriptdb --cov-report=term-missing
 ```
 
 ## AI Usage disclaimer
