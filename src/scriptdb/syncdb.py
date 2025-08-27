@@ -19,6 +19,7 @@ from typing import (
     Generator,
     Union,
     Generic,
+    cast,
 )
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
@@ -56,7 +57,7 @@ class SyncBaseDB(AbstractBaseDB):
 
     def __init__(self, db_path: str, auto_create: bool = True, *, use_wal: bool = True) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
-        self.conn: Union[sqlite3.Connection, None] = None
+        self.conn: sqlite3.Connection = cast(sqlite3.Connection, None)
         self._periodic_threads: List[threading.Thread] = []
         self._stop_event = threading.Event()
         self._upsert_lock = threading.Lock()
@@ -93,14 +94,12 @@ class SyncBaseDB(AbstractBaseDB):
             self._periodic_threads.append(t)
 
     def _ensure_migrations_table(self) -> None:
-        assert self.conn is not None
         sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         self.conn.execute(sql)
         self.conn.commit()
 
     def _applied_versions(self) -> Set[str]:
-        assert self.conn is not None
         sql = "SELECT name FROM applied_migrations"
         logger.debug("Executing SQL: %s", sql)
         cur = self.conn.execute(sql)
@@ -109,7 +108,6 @@ class SyncBaseDB(AbstractBaseDB):
         return {row["name"] for row in rows}
 
     def _apply_migrations(self) -> None:
-        assert self.conn is not None
         migrations_list = self.migrations()
         applied = self._applied_versions()
         for mig in self._validate_migrations(migrations_list, applied):
@@ -155,9 +153,9 @@ class SyncBaseDB(AbstractBaseDB):
             self.conn.execute(sql, (name,))
             self.conn.commit()
 
+    @require_init
     def _primary_key(self, table: str) -> str:
         if table not in self._pk_cache:
-            assert self.conn is not None
             sql = f"PRAGMA table_info({table})"
             logger.debug("Executing SQL: %s", sql)
             cur = self.conn.execute(sql)
@@ -185,7 +183,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> sqlite3.Cursor:
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
@@ -199,7 +196,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         seq_params: Iterable[Sequence[Any]],
     ) -> sqlite3.Cursor:
-        assert self.conn is not None
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = self.conn.executemany(sql, seq_params)
         self.conn.commit()
@@ -213,7 +209,6 @@ class SyncBaseDB(AbstractBaseDB):
         placeholders = ", ".join([f":{c}" for c in row])
         sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
         logger.debug("Executing SQL: %s; params: %s", sql, row)
-        assert self.conn is not None
         cur = self.conn.execute(sql, row)
         self.conn.commit()
         self._on_query()
@@ -229,7 +224,6 @@ class SyncBaseDB(AbstractBaseDB):
         col_clause = ", ".join(cols)
         placeholders = ", ".join([f":{c}" for c in cols])
         sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        assert self.conn is not None
         self.conn.executemany(sql, rows)
         self.conn.commit()
         self._on_query()
@@ -250,7 +244,6 @@ class SyncBaseDB(AbstractBaseDB):
             if update_cols:
                 assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
                 update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}"
-            assert self.conn is not None
             try:
                 self.conn.execute(insert_sql, row)
             except sqlite3.IntegrityError:
@@ -281,7 +274,6 @@ class SyncBaseDB(AbstractBaseDB):
                 if update_cols
                 else ""
             )
-            assert self.conn is not None
             for row in rows:
                 try:
                     self.conn.execute(insert_sql, row)
@@ -296,7 +288,6 @@ class SyncBaseDB(AbstractBaseDB):
     def delete_one(self, table: str, pk: Any) -> int:
         pk_col = self._primary_key(table)
         sql = f"DELETE FROM {table} WHERE {pk_col}=?"
-        assert self.conn is not None
         cur = self.conn.execute(sql, (pk,))
         self.conn.commit()
         self._on_query()
@@ -309,7 +300,6 @@ class SyncBaseDB(AbstractBaseDB):
         where: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> int:
-        assert self.conn is not None
         ps = params if params is not None else ()
         sql = f"DELETE FROM {table} WHERE {where}"
         cur = self.conn.execute(sql, ps)
@@ -324,7 +314,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:pk"
         row = dict(row)
         row["pk"] = pk
-        assert self.conn is not None
         cur = self.conn.execute(sql, row)
         self.conn.commit()
         self._on_query()
@@ -336,7 +325,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> Optional[sqlite3.Row]:
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
@@ -351,7 +339,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> List[sqlite3.Row]:
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
@@ -366,7 +353,6 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> Generator[sqlite3.Row, None, None]:
-        assert self.conn is not None
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
@@ -445,7 +431,7 @@ class SyncBaseDB(AbstractBaseDB):
     def close(self) -> None:
         self._stop_event.set()
         for t in self._periodic_threads:
-            t.join()
+            t.join(timeout=0)
         self._periodic_threads.clear()
         if self.conn:
             self.conn.close()
