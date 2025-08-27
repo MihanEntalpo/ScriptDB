@@ -362,7 +362,13 @@ is generated.
 ## Running tests
 
 ```bash
-pytest --cov=scriptdb --cov-report=term-missing
+make test
+```
+
+Run linters and type checks with:
+
+```bash
+make lint
 ```
 
 ## Contributing
@@ -390,9 +396,8 @@ pip install -e .[async,test]
 Before committing, ensure code passes the linters, type checks, and tests with coverage:
 
 ```bash
-ruff check .
-mypy src/scriptdb
-pytest --cov=scriptdb --cov-report=term-missing
+make lint
+make test
 ```
 
 ## AI Usage disclaimer
