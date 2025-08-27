@@ -72,10 +72,13 @@ def run_every_queries(queries: int) -> Callable:
 
 
 class AbstractBaseDB(abc.ABC):
-    def __init__(self, db_path: str, auto_create: bool = True, *, use_wal: bool = True) -> None:
-        if not auto_create and not Path(db_path).exists():
+    def __init__(
+        self, db_path: Union[str, Path], auto_create: bool = True, *, use_wal: bool = True
+    ) -> None:
+        path_obj = Path(db_path)
+        if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        self.db_path = db_path
+        self.db_path = str(path_obj)
         self.auto_create = auto_create
         self.use_wal = use_wal
         self.conn: Union[sqlite3.Connection, aiosqlite.Connection, None] = None

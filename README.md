@@ -102,6 +102,16 @@ async def main():
         )
     finally:
         await db.close()
+
+    # Daemonize the aiosqlite worker thread to avoid hanging on exit
+    async with MyDB.open("app.db", daemonize_thread=True) as db:
+        await db.execute("SELECT 1")
+
+    db = await MyDB.open("app.db", daemonize_thread=True)
+    try:
+        await db.execute("SELECT 1")
+    finally:
+        await db.close()
 ```
 
 Always close the database connection with `close()` or use the `async with`
@@ -109,6 +119,21 @@ context manager as shown above. If you call `MyDB.open()` without a context
 manager, remember to `await db.close()` when finished. Leaving a database open
 may keep background tasks alive and prevent your application from exiting
 cleanly.
+
+### Daemonizable aiosqlite
+
+`aiosqlite` runs a worker thread to execute SQLite operations. There has been an
+ongoing debate in the `aiosqlite` project about whether this thread should be a
+daemon. A non-daemon worker can keep the Python process alive even after all
+tasks have finished. ScriptDB ships with the internal
+`daemonizable_aiosqlite` module that wraps `aiosqlite.connect` and allows this
+worker thread to be marked as daemon.
+
+The test suite in this repository relies on this module; without it, lingering
+threads would prevent tests from completing. To enable daemon mode in your
+application, pass `daemonize_thread=True` when opening the database as shown
+above. Use this option only if your program hangs on exit, as daemon threads can
+be terminated abruptly, potentially losing in-flight work.
 
 ## Synchronous quick start
 

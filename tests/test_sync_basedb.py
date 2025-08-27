@@ -30,7 +30,7 @@ class MyTestDB(SyncBaseDB):
 @pytest.fixture
 def db(tmp_path):
     db_file = tmp_path / "test.db"
-    with MyTestDB.open(str(db_file)) as db:
+    with MyTestDB.open(db_file) as db:
         yield db
 
 
@@ -57,7 +57,7 @@ def test_wal_mode_enabled(db):
 
 def test_wal_mode_can_be_disabled(tmp_path):
     db_file = tmp_path / "nowal.db"
-    ctx = MyTestDB.open(str(db_file), use_wal=False)
+    ctx = MyTestDB.open(db_file, use_wal=False)
     db = ctx._open()
     try:
         mode = db.query_scalar("PRAGMA journal_mode")
