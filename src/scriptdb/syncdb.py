@@ -54,7 +54,9 @@ class _SyncDBOpenContext(Generic[T]):
 
 
 class SyncBaseDB(AbstractBaseDB):
-    def __init__(self, db_path: str, auto_create: bool = True, *, use_wal: bool = True) -> None:
+    def __init__(
+        self, db_path: Union[str, Path], auto_create: bool = True, *, use_wal: bool = True
+    ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: sqlite3.Connection = cast(sqlite3.Connection, None)
         self._periodic_threads: List[threading.Thread] = []
@@ -62,10 +64,13 @@ class SyncBaseDB(AbstractBaseDB):
         self._upsert_lock = threading.Lock()
 
     @classmethod
-    def open(cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True) -> _SyncDBOpenContext[T]:
-        if not auto_create and not Path(db_path).exists():
+    def open(
+        cls: Type[T], db_path: Union[str, Path], *, auto_create: bool = True, use_wal: bool = True
+    ) -> _SyncDBOpenContext[T]:
+        path_obj = Path(db_path)
+        if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _SyncDBOpenContext(cls, db_path, auto_create, use_wal)
+        return _SyncDBOpenContext(cls, str(path_obj), auto_create, use_wal)
 
     def init(self) -> None:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)

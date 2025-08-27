@@ -124,7 +124,12 @@ class AsyncBaseDB(AbstractBaseDB):
     """
 
     def __init__(
-        self, db_path: str, auto_create: bool = True, *, use_wal: bool = True, daemonize_thread: bool = False
+        self,
+        db_path: Union[str, Path],
+        auto_create: bool = True,
+        *,
+        use_wal: bool = True,
+        daemonize_thread: bool = False,
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: aiosqlite.Connection = cast(aiosqlite.Connection, None)
@@ -150,7 +155,12 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @classmethod
     def open(
-        cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True, daemonize_thread: bool = False
+        cls: Type[T],
+        db_path: Union[str, Path],
+        *,
+        auto_create: bool = True,
+        use_wal: bool = True,
+        daemonize_thread: bool = False,
     ) -> _AsyncDBOpenContext[T]:
         """
         Factory returning an awaitable context manager for the database instance.
@@ -160,6 +170,7 @@ class AsyncBaseDB(AbstractBaseDB):
             ``async with YourDB.open("app.db") as db: ...``
 
         Parameters:
+            db_path: Filesystem path to the SQLite database.
             auto_create: Whether to create the database file if it does not exist.
             use_wal: Enable SQLite's WAL journal mode. Pass ``False`` to disable.
             daemonize_thread: Make background thread to be daemonize, set it to True if program hangs on exit
@@ -167,9 +178,10 @@ class AsyncBaseDB(AbstractBaseDB):
         Returns:
             Awaitable context manager yielding an initialized subclass instance of type T.
         """
-        if not auto_create and not Path(db_path).exists():
+        path_obj = Path(db_path)
+        if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _AsyncDBOpenContext(cls, db_path, auto_create, use_wal, daemonize_thread)
+        return _AsyncDBOpenContext(cls, str(path_obj), auto_create, use_wal, daemonize_thread)
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:

@@ -25,7 +25,7 @@ class MyTestDB(AsyncBaseDB):
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / "test.db"
-    async with MyTestDB.open(str(db_file), daemonize_thread=True) as db:
+    async with MyTestDB.open(db_file, daemonize_thread=True) as db:
         yield db
 
 
@@ -56,7 +56,7 @@ async def test_wal_mode_enabled(db):
 @pytest.mark.asyncio
 async def test_wal_mode_can_be_disabled(tmp_path):
     db_file = tmp_path / "nowal.db"
-    db = await MyTestDB.open(str(db_file), use_wal=False, daemonize_thread=True)
+    db = await MyTestDB.open(db_file, use_wal=False, daemonize_thread=True)
     try:
         mode = await db.query_scalar("PRAGMA journal_mode")
         assert mode != "wal"

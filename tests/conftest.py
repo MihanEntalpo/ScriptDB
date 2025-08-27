@@ -1,4 +1,12 @@
-# tests/conftest.py
+"""Pytest helpers to detect and handle lingering threads.
+
+The test suite occasionally triggers a long-standing issue in ``aiosqlite``
+where its worker thread keeps running after the event loop finishes. This file
+groups live threads at session end and, if any aiosqlite workers remain,
+prints their stacks and schedules a ``SIGTERM`` to ensure the process exits.
+It helps verify that ``daemonize_thread`` works and prevents hanging tests.
+"""
+
 import sys
 import os
 import time
