@@ -6,12 +6,14 @@ import logging
 import contextlib
 import inspect
 import re
+import traceback
+
+from . import daemonizable_aiosqlite
+
 try:
     import aiosqlite
 except ImportError as exc:
-    raise ImportError(
-        "aiosqlite is required for async support; install with 'scriptdb[async]'"
-    ) from exc
+    raise ImportError("aiosqlite is required for async support; install with 'scriptdb[async]'") from exc
 from pathlib import Path
 from typing import (
     Any,
@@ -33,7 +35,33 @@ from typing import (
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
 
-T = TypeVar('T', bound='AsyncBaseDB')
+
+def _capture_creation_site() -> str:
+    """
+    Return short path to call location
+    <file>:<line> in <func>
+    """
+    try:
+        stack = traceback.extract_stack()
+        # remove current frame and site-packages/aiosqlite frames
+        filtered = [
+            fr
+            for fr in stack
+            if "site-packages" not in (fr.filename or "")
+            and not fr.filename.endswith("asyncdb.py")
+            and "aiosqlite" not in (fr.filename or "")
+        ]
+        if not filtered:
+            filtered = stack[-5:]
+
+        head = filtered[-1]
+        head_str = f"{head.filename}:{head.lineno} in {head.name}"
+    except Exception:
+        head_str = "unknown:unknown"
+    return head_str
+
+
+T = TypeVar("T", bound="AsyncBaseDB")
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +77,20 @@ class _AsyncDBOpenContext(Generic[T]):
     """
 
     def __init__(
-        self, cls: Type[T], db_path: str, auto_create: bool, use_wal: bool
+        self, cls: Type[T], db_path: str, auto_create: bool, use_wal: bool, daemonize_thread: bool = False
     ) -> None:
         self._cls = cls
         self._db_path = db_path
         self._auto_create = auto_create
         self._use_wal = use_wal
         self._db: Optional[T] = None
+        self._daemonize_thread = daemonize_thread
 
     async def _open(self) -> T:
         instance: T = self._cls(self._db_path)  # type: ignore
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
+        instance.daemonize_thread = self._daemonize_thread
         await instance.init()
         instance._register_signal_handlers()
         self._db = instance
@@ -94,10 +124,11 @@ class AsyncBaseDB(AbstractBaseDB):
     """
 
     def __init__(
-        self, db_path: str, auto_create: bool = True, *, use_wal: bool = True
+        self, db_path: str, auto_create: bool = True, *, use_wal: bool = True, daemonize_thread: bool = False
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: aiosqlite.Connection = cast(aiosqlite.Connection, None)
+        self.daemonize_thread: bool = daemonize_thread
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_tasks: List[asyncio.Task] = []
         self._upsert_lock = asyncio.Lock()
@@ -108,8 +139,10 @@ class AsyncBaseDB(AbstractBaseDB):
         if self._signals_registered:
             return
         loop = asyncio.get_running_loop()
+
         def _handler() -> None:
             asyncio.create_task(self.close())
+
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _handler)
         self._signal_loop = loop
@@ -117,7 +150,7 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @classmethod
     def open(
-        cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True
+        cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True, daemonize_thread: bool = False
     ) -> _AsyncDBOpenContext[T]:
         """
         Factory returning an awaitable context manager for the database instance.
@@ -129,13 +162,14 @@ class AsyncBaseDB(AbstractBaseDB):
         Parameters:
             auto_create: Whether to create the database file if it does not exist.
             use_wal: Enable SQLite's WAL journal mode. Pass ``False`` to disable.
+            daemonize_thread: Make background thread to be daemonize, set it to True if program hangs on exit
 
         Returns:
             Awaitable context manager yielding an initialized subclass instance of type T.
         """
         if not auto_create and not Path(db_path).exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _AsyncDBOpenContext(cls, db_path, auto_create, use_wal)
+        return _AsyncDBOpenContext(cls, db_path, auto_create, use_wal, daemonize_thread)
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
@@ -154,7 +188,10 @@ class AsyncBaseDB(AbstractBaseDB):
         """
         Initialize the database connection and apply pending migrations.
         """
-        self.conn = await aiosqlite.connect(self.db_path)
+        self.conn = await daemonizable_aiosqlite.connect(
+            self.db_path, daemonize_thread=self.daemonize_thread, creation_site=_capture_creation_site()
+        )
+
         if getattr(self, "use_wal", False):
             await self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.row_factory = sqlite3.Row
@@ -163,6 +200,7 @@ class AsyncBaseDB(AbstractBaseDB):
         self.initialized = True
 
         for seconds, method in self._periodic_specs:
+
             async def runner(method=method, seconds=seconds):
                 while True:
                     logger.info("Launching method %s", method.__name__)
@@ -210,9 +248,7 @@ class AsyncBaseDB(AbstractBaseDB):
                     )
                     await self.conn.executescript(mig["sql"])
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Error while applying migration {name}: {exc}"
-                    ) from exc
+                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             elif "sqls" in mig:
                 sqls = mig["sqls"]
                 if (
@@ -220,9 +256,7 @@ class AsyncBaseDB(AbstractBaseDB):
                     or isinstance(sqls, (str, bytes))
                     or not all(isinstance(s, str) for s in sqls)
                 ):
-                    raise TypeError(
-                        f"'sqls' for migration {name} must be a sequence of strings"
-                    )
+                    raise TypeError(f"'sqls' for migration {name} must be a sequence of strings")
                 try:
                     for sql in sqls:
                         logger.debug(
@@ -231,21 +265,15 @@ class AsyncBaseDB(AbstractBaseDB):
                         )
                         await self.conn.executescript(sql)
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Error while applying migration {name}: {exc}"
-                    ) from exc
+                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             else:
                 func = mig["function"]
                 if not callable(func) or not inspect.iscoroutinefunction(func):
-                    raise TypeError(
-                        f"'function' for migration {name} must be an async function"
-                    )
+                    raise TypeError(f"'function' for migration {name} must be an async function")
                 try:
                     await func(self, migrations_list, name)
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Error while applying migration {name}: {exc}"
-                    ) from exc
+                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
 
             sql = "INSERT INTO applied_migrations(name) VALUES (?)"
             logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
@@ -295,11 +323,7 @@ class AsyncBaseDB(AbstractBaseDB):
                 task.add_done_callback(_cleanup)
 
     @require_init
-    async def execute(
-        self,
-        sql: str,
-        params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> aiosqlite.Cursor:
+    async def execute(self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None) -> aiosqlite.Cursor:
         """
         Execute a statement with positional or named parameters and commit.
         Returns aiosqlite.Cursor.
@@ -318,11 +342,7 @@ class AsyncBaseDB(AbstractBaseDB):
         return cur
 
     @require_init
-    async def execute_many(
-        self,
-        sql: str,
-        seq_params: Iterable[Sequence[Any]]
-    ) -> aiosqlite.Cursor:
+    async def execute_many(self, sql: str, seq_params: Iterable[Sequence[Any]]) -> aiosqlite.Cursor:
         """
         Execute many positional statements and commit.
         Returns aiosqlite.Cursor.
@@ -502,9 +522,7 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @require_init
     async def query_many(
-        self,
-        sql: str,
-        params: Union[Sequence[Any], Mapping[str, Any], None] = None
+        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
     ) -> List[sqlite3.Row]:
         """
         Fetch all rows with parameters. Returns List[sqlite3.Row].
@@ -526,9 +544,7 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @require_init
     async def query_many_gen(
-        self,
-        sql: str,
-        params: Union[Sequence[Any], Mapping[str, Any], None] = None
+        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
     ) -> AsyncGenerator[sqlite3.Row, None]:
         """
         Async generator fetching rows one by one. Yields sqlite3.Row objects.
@@ -548,9 +564,7 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @require_init
     async def query_one(
-        self,
-        sql: str,
-        params: Union[Sequence[Any], Mapping[str, Any], None] = None
+        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
     ) -> Optional[sqlite3.Row]:
         """
         Fetch single row with parameters. Returns sqlite3.Row or None.
@@ -658,10 +672,12 @@ class AsyncBaseDB(AbstractBaseDB):
             def get_key(row: sqlite3.Row) -> Any:
                 return row[key_str]
         else:
+
             def get_key(row: sqlite3.Row) -> Any:
                 return key(row)
 
         if value is None:
+
             def get_value(row: sqlite3.Row) -> Any:
                 return row
         elif isinstance(value, str):
@@ -670,6 +686,7 @@ class AsyncBaseDB(AbstractBaseDB):
             def get_value(row: sqlite3.Row) -> Any:
                 return row[value_str]
         else:
+
             def get_value(row: sqlite3.Row) -> Any:
                 return value(row)
 
@@ -708,7 +725,6 @@ class AsyncBaseDB(AbstractBaseDB):
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
-
 
 
 # Alias for backward compatibility

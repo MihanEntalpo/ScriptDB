@@ -5,7 +5,8 @@
 ### Added
 
 * PyPI classifiers and packaged type hints via `py.typed`
-* Ruff and mypy linting with CI integration and developer docs
+* Ruff and mypy linting with CI integration and developer docs + reformatting
+* Added daemonizing aiosqlite so tests (or some apps) would not hang
 
 ## 1.0.2 - Lazy async imports
 

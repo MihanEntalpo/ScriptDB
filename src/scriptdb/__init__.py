@@ -12,12 +12,12 @@ from .syncdb import SyncBaseDB  # noqa: E402
 
 __all__ = [
     "AbstractBaseDB",
-    "AsyncBaseDB",
+    "AsyncBaseDB",  # lazy-imported via __getattr__
     "SyncBaseDB",
     "run_every_seconds",
     "run_every_queries",
-    "AsyncCacheDB",
-    "SyncCacheDB",
+    "AsyncCacheDB",  # lazy-imported via __getattr__
+    "SyncCacheDB",  # lazy-imported via __getattr__
 ]
 __version__ = "1.0.2"
 
@@ -47,9 +47,7 @@ def __getattr__(name: str):
             module = __import__(f"{__name__}.{module_name}", fromlist=[attr_name])
         except ImportError as exc:  # pragma: no cover - runtime guard
             if name == "AsyncBaseDB":
-                raise ImportError(
-                    "aiosqlite is required for async support; install with 'scriptdb[async]'"
-                ) from exc
+                raise ImportError("aiosqlite is required for async support; install with 'scriptdb[async]'") from exc
             raise
         return getattr(module, attr_name)
 

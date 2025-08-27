@@ -6,7 +6,7 @@ from typing import Dict, Any
 import threading
 
 # Add the src directory to sys.path so we can import the package
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from scriptdb import SyncBaseDB, run_every_seconds, run_every_queries
 
 
@@ -35,13 +35,9 @@ def db(tmp_path):
 
 
 def test_open_applies_migrations(db):
-    row = db.query_one(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='t'"
-    )
+    row = db.query_one("SELECT name FROM sqlite_master WHERE type='table' AND name='t'")
     assert row is not None
-    mig = db.query_one(
-        "SELECT name FROM applied_migrations WHERE name='create_table'"
-    )
+    mig = db.query_one("SELECT name FROM applied_migrations WHERE name='create_table'")
     assert mig is not None
 
 
@@ -155,9 +151,7 @@ def test_upsert_waits_for_lock(db):
 
 def test_upsert_many_waits_for_lock(db):
     db._upsert_lock.acquire()
-    t1 = threading.Thread(
-        target=lambda: db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}])
-    )
+    t1 = threading.Thread(target=lambda: db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}]))
     t1.start()
     time.sleep(0.01)
     count = db.query_scalar("SELECT COUNT(*) FROM t")

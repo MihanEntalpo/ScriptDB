@@ -1,12 +1,7 @@
 import asyncio
 import pytest
 import pytest_asyncio
-import sys
-import pathlib
 from typing import Dict, Any
-
-# Add the src directory to sys.path so we can import the package
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
 from scriptdb import AsyncBaseDB, run_every_seconds, run_every_queries
 
 
@@ -30,19 +25,15 @@ class MyTestDB(AsyncBaseDB):
 @pytest_asyncio.fixture
 async def db(tmp_path):
     db_file = tmp_path / "test.db"
-    async with MyTestDB.open(str(db_file)) as db:
+    async with MyTestDB.open(str(db_file), daemonize_thread=True) as db:
         yield db
 
 
 @pytest.mark.asyncio
 async def test_open_applies_migrations(db):
-    row = await db.query_one(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='t'"
-    )
+    row = await db.query_one("SELECT name FROM sqlite_master WHERE type='table' AND name='t'")
     assert row is not None
-    mig = await db.query_one(
-        "SELECT name FROM applied_migrations WHERE name='create_table'"
-    )
+    mig = await db.query_one("SELECT name FROM applied_migrations WHERE name='create_table'")
     assert mig is not None
 
 
@@ -65,7 +56,7 @@ async def test_wal_mode_enabled(db):
 @pytest.mark.asyncio
 async def test_wal_mode_can_be_disabled(tmp_path):
     db_file = tmp_path / "nowal.db"
-    db = await MyTestDB.open(str(db_file), use_wal=False)
+    db = await MyTestDB.open(str(db_file), use_wal=False, daemonize_thread=True)
     try:
         mode = await db.query_scalar("PRAGMA journal_mode")
         assert mode != "wal"
@@ -255,14 +246,14 @@ async def test_query_dict_requires_key_when_table_unknown(db):
 @pytest.mark.asyncio
 async def test_async_with_closes(tmp_path):
     db_file = tmp_path / "ctx.db"
-    async with MyTestDB.open(str(db_file)) as db:
+    async with MyTestDB.open(str(db_file), daemonize_thread=True) as db:
         await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
     assert db.initialized is False
 
 
 @pytest.mark.asyncio
 async def test_close_sets_initialized_false(tmp_path):
-    db = await MyTestDB.open(str(tmp_path / "db.sqlite"))
+    db = await MyTestDB.open(str(tmp_path / "db.sqlite"), daemonize_thread=True)
     await db.close()
     assert db.initialized is False
     with pytest.raises(RuntimeError):
@@ -271,7 +262,7 @@ async def test_close_sets_initialized_false(tmp_path):
 
 @pytest.mark.asyncio
 async def test_require_init_decorator():
-    db = MyTestDB("test.db")
+    db = MyTestDB("test.db", daemonize_thread=True)
     with pytest.raises(RuntimeError):
         await db.execute("SELECT 1")
 
@@ -280,14 +271,14 @@ async def test_require_init_decorator():
 async def test_auto_create_false_missing_file(tmp_path):
     db_file = tmp_path / "nope.sqlite"
     with pytest.raises(RuntimeError):
-        await MyTestDB.open(str(db_file), auto_create=False)
+        await MyTestDB.open(str(db_file), auto_create=False, daemonize_thread=True)
 
 
 @pytest.mark.asyncio
 async def test_auto_create_false_existing_file(tmp_path):
     db_file = tmp_path / "exists.sqlite"
     db_file.touch()
-    db = await MyTestDB.open(str(db_file), auto_create=False)
+    db = await MyTestDB.open(str(db_file), auto_create=False, daemonize_thread=True)
     try:
         assert db.initialized is True
     finally:
@@ -305,7 +296,7 @@ class DuplicateNameDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_duplicate_migration_names(tmp_path):
     with pytest.raises(ValueError):
-        await DuplicateNameDB.open(str(tmp_path / "dup.sqlite"))
+        await DuplicateNameDB.open(str(tmp_path / "dup.sqlite"), daemonize_thread=True)
 
 
 class MissingNameDB(AsyncBaseDB):
@@ -316,7 +307,7 @@ class MissingNameDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_missing_migration_name(tmp_path):
     with pytest.raises(ValueError):
-        await MissingNameDB.open(str(tmp_path / "miss.sqlite"))
+        await MissingNameDB.open(str(tmp_path / "miss.sqlite"), daemonize_thread=True)
 
 
 class NonCallableFuncDB(AsyncBaseDB):
@@ -327,7 +318,7 @@ class NonCallableFuncDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_non_callable_function(tmp_path):
     with pytest.raises(TypeError):
-        await NonCallableFuncDB.open(str(tmp_path / "bad.sqlite"))
+        await NonCallableFuncDB.open(str(tmp_path / "bad.sqlite"), daemonize_thread=True)
 
 
 class NonAsyncFuncDB(AsyncBaseDB):
@@ -341,7 +332,7 @@ class NonAsyncFuncDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_non_async_function(tmp_path):
     with pytest.raises(TypeError):
-        await NonAsyncFuncDB.open(str(tmp_path / "bad_sync.sqlite"))
+        await NonAsyncFuncDB.open(str(tmp_path / "bad_sync.sqlite"), daemonize_thread=True)
 
 
 class AsyncFuncDB(AsyncBaseDB):
@@ -361,7 +352,7 @@ class AsyncFuncDB(AsyncBaseDB):
 
 @pytest.mark.asyncio
 async def test_async_function_called_with_args(tmp_path):
-    db = await AsyncFuncDB.open(str(tmp_path / "good.sqlite"))
+    db = await AsyncFuncDB.open(str(tmp_path / "good.sqlite"), daemonize_thread=True)
     try:
         assert AsyncFuncDB.recorded["db"] is db
         assert AsyncFuncDB.recorded["migrations"][0]["name"] == "good"
@@ -378,7 +369,7 @@ class MissingSqlFuncDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_missing_sql_and_function(tmp_path):
     with pytest.raises(ValueError):
-        await MissingSqlFuncDB.open(str(tmp_path / "bad2.sqlite"))
+        await MissingSqlFuncDB.open(str(tmp_path / "bad2.sqlite"), daemonize_thread=True)
 
 
 class BadSqlsDB(AsyncBaseDB):
@@ -392,7 +383,7 @@ class BadSqlsDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_sqls_must_be_sequence(tmp_path):
     with pytest.raises(TypeError):
-        await BadSqlsDB.open(str(tmp_path / "bad_sqls.sqlite"))
+        await BadSqlsDB.open(str(tmp_path / "bad_sqls.sqlite"), daemonize_thread=True)
 
 
 class FailingMigrationDB(AsyncBaseDB):
@@ -406,14 +397,14 @@ class FailingMigrationDB(AsyncBaseDB):
 @pytest.mark.asyncio
 async def test_migration_error_wrapped(tmp_path):
     with pytest.raises(RuntimeError) as excinfo:
-        await FailingMigrationDB.open(str(tmp_path / "fail.sqlite"))
+        await FailingMigrationDB.open(str(tmp_path / "fail.sqlite"), daemonize_thread=True)
     assert "Error while applying migration bad" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
 async def test_unknown_applied_migration(tmp_path):
     db_file = tmp_path / "ghost.sqlite"
-    db = await MyTestDB.open(str(db_file))
+    db = await MyTestDB.open(str(db_file), daemonize_thread=True)
     await db.close()
 
     import sqlite3
@@ -424,7 +415,7 @@ async def test_unknown_applied_migration(tmp_path):
     conn.close()
 
     with pytest.raises(ValueError) as exc:
-        await MyTestDB.open(str(db_file))
+        await MyTestDB.open(str(db_file), daemonize_thread=True)
     assert "ghost" in str(exc.value)
     assert "inconsistent" in str(exc.value)
 
@@ -453,8 +444,8 @@ async def test_run_every_seconds(tmp_path):
 
 
 class QueryHookDB(AsyncBaseDB):
-    def __init__(self, path: str):
-        super().__init__(path)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.calls = 0
 
     def migrations(self):
@@ -467,7 +458,7 @@ class QueryHookDB(AsyncBaseDB):
 
 @pytest.mark.asyncio
 async def test_run_every_queries(tmp_path):
-    db = await QueryHookDB.open(str(tmp_path / "hook.sqlite"))
+    db = await QueryHookDB.open(str(tmp_path / "hook.sqlite"), daemonize_thread=True)
     try:
         await db.query_one("SELECT 1")
         await db.query_one("SELECT 1")

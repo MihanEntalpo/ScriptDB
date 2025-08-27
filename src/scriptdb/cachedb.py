@@ -18,20 +18,14 @@ class AsyncCacheDB(AsyncBaseDB):
             {
                 "name": "create_cache_table",
                 "sql": (
-                    "CREATE TABLE IF NOT EXISTS cache ("
-                    "key TEXT PRIMARY KEY,"
-                    "value BLOB NOT NULL,"
-                    "expire_utc DATETIME"
-                    ")"
+                    "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY,value BLOB NOT NULL,expire_utc DATETIME)"
                 ),
             }
         ]
 
     @require_init
     async def get(self, key: str, default: Any = None) -> Any:
-        row = await self.query_one(
-            "SELECT value, expire_utc FROM cache WHERE key=?", (key,)
-        )
+        row = await self.query_one("SELECT value, expire_utc FROM cache WHERE key=?", (key,))
         if row is None:
             return default
         expire_utc = row["expire_utc"]
@@ -50,9 +44,7 @@ class AsyncCacheDB(AsyncBaseDB):
         return exists is not None
 
     @require_init
-    async def set(
-        self, key: str, value: Any, expire_sec: Optional[int] = None
-    ) -> None:
+    async def set(self, key: str, value: Any, expire_sec: Optional[int] = None) -> None:
         now = datetime.now(timezone.utc)
         if expire_sec is None:
             expire_utc = None
@@ -76,19 +68,14 @@ class AsyncCacheDB(AsyncBaseDB):
     @require_init
     async def del_many(self, key_mask: str) -> int:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
-        cur = await self.execute(
-            "DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'", (pattern,)
-        )
+        cur = await self.execute("DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'", (pattern,))
         return cur.rowcount
 
     @require_init
     async def keys(self, key_mask: str) -> List[str]:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
         return await self.query_column(
-            (
-                "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' "
-                "AND (expire_utc IS NULL OR expire_utc > ?)"
-            ),
+            ("SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)"),
             (pattern, datetime.now(timezone.utc).isoformat()),
         )
 
@@ -104,11 +91,7 @@ class AsyncCacheDB(AsyncBaseDB):
     ) -> Callable:
         def decorator(func: Callable) -> Callable:
             async def wrapper(*args, **kwargs):
-                key = (
-                    key_func(*args, **kwargs)
-                    if key_func
-                    else f"{func.__name__}:{args}:{kwargs}"
-                )
+                key = key_func(*args, **kwargs) if key_func else f"{func.__name__}:{args}:{kwargs}"
                 _sentinel = object()
                 value = await self.get(key, _sentinel)
                 if value is not _sentinel:
@@ -132,6 +115,7 @@ class AsyncCacheDB(AsyncBaseDB):
             (datetime.now(timezone.utc).isoformat(),),
         )
 
+
 class SyncCacheDB(SyncBaseDB):
     """Synchronous cache database with expiration support."""
 
@@ -140,11 +124,7 @@ class SyncCacheDB(SyncBaseDB):
             {
                 "name": "create_cache_table",
                 "sql": (
-                    "CREATE TABLE IF NOT EXISTS cache ("
-                    "key TEXT PRIMARY KEY,"
-                    "value BLOB NOT NULL,"
-                    "expire_utc DATETIME"
-                    ")"
+                    "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY,value BLOB NOT NULL,expire_utc DATETIME)"
                 ),
             }
         ]
@@ -193,19 +173,14 @@ class SyncCacheDB(SyncBaseDB):
     @require_init
     def del_many(self, key_mask: str) -> int:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
-        cur = self.execute(
-            "DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'", (pattern,)
-        )
+        cur = self.execute("DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'", (pattern,))
         return cur.rowcount
 
     @require_init
     def keys(self, key_mask: str) -> List[str]:
         pattern = key_mask.replace("_", "\\_").replace("*", "%")
         return self.query_column(
-            (
-                "SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' "
-                "AND (expire_utc IS NULL OR expire_utc > ?)"
-            ),
+            ("SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)"),
             (pattern, datetime.now(timezone.utc).isoformat()),
         )
 
@@ -221,11 +196,7 @@ class SyncCacheDB(SyncBaseDB):
     ) -> Callable:
         def decorator(func: Callable) -> Callable:
             def wrapper(*args, **kwargs):
-                key = (
-                    key_func(*args, **kwargs)
-                    if key_func
-                    else f"{func.__name__}:{args}:{kwargs}"
-                )
+                key = key_func(*args, **kwargs) if key_func else f"{func.__name__}:{args}:{kwargs}"
                 _sentinel = object()
                 value = self.get(key, _sentinel)
                 if value is not _sentinel:
@@ -251,6 +222,5 @@ class SyncCacheDB(SyncBaseDB):
 
 
 # Alias to comply with 'del' name
-setattr(AsyncCacheDB, 'del', AsyncCacheDB.delete)
-setattr(SyncCacheDB, 'del', SyncCacheDB.delete)
-
+setattr(AsyncCacheDB, "del", AsyncCacheDB.delete)
+setattr(SyncCacheDB, "del", SyncCacheDB.delete)

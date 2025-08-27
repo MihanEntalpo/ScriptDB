@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 
 # Add the src directory to sys.path so we can import the package
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from scriptdb import AsyncBaseDB
 
 

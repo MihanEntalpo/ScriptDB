@@ -26,7 +26,7 @@ from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound='SyncBaseDB')
+T = TypeVar("T", bound="SyncBaseDB")
 
 
 class _SyncDBOpenContext(Generic[T]):
@@ -54,7 +54,6 @@ class _SyncDBOpenContext(Generic[T]):
 
 
 class SyncBaseDB(AbstractBaseDB):
-
     def __init__(self, db_path: str, auto_create: bool = True, *, use_wal: bool = True) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: sqlite3.Connection = cast(sqlite3.Connection, None)
@@ -63,9 +62,7 @@ class SyncBaseDB(AbstractBaseDB):
         self._upsert_lock = threading.Lock()
 
     @classmethod
-    def open(
-        cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True
-    ) -> _SyncDBOpenContext[T]:
+    def open(cls: Type[T], db_path: str, *, auto_create: bool = True, use_wal: bool = True) -> _SyncDBOpenContext[T]:
         if not auto_create and not Path(db_path).exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
         return _SyncDBOpenContext(cls, db_path, auto_create, use_wal)
@@ -80,6 +77,7 @@ class SyncBaseDB(AbstractBaseDB):
         self.initialized = True
 
         for seconds, method in self._periodic_specs:
+
             def runner(method=method, seconds=seconds):
                 while not self._stop_event.wait(seconds):
                     logger.info("Launching method %s", method.__name__)
@@ -89,6 +87,7 @@ class SyncBaseDB(AbstractBaseDB):
                         method.__name__,
                         seconds,
                     )
+
             t = threading.Thread(target=runner, daemon=True)
             t.start()
             self._periodic_threads.append(t)
@@ -125,9 +124,7 @@ class SyncBaseDB(AbstractBaseDB):
                     or isinstance(sqls, (str, bytes))
                     or not all(isinstance(s, str) for s in sqls)
                 ):
-                    raise TypeError(
-                        f"'sqls' for migration {name} must be a sequence of strings"
-                    )
+                    raise TypeError(f"'sqls' for migration {name} must be a sequence of strings")
                 try:
                     for sql in sqls:
                         logger.debug("Applying migration by executing SQL script: %s", sql)
@@ -139,15 +136,11 @@ class SyncBaseDB(AbstractBaseDB):
                 if not callable(func):
                     raise TypeError(f"'function' for migration {name} must be callable")
                 if inspect.iscoroutinefunction(func):
-                    raise TypeError(
-                        f"'function' for migration {name} must be synchronous"
-                    )
+                    raise TypeError(f"'function' for migration {name} must be synchronous")
                 try:
                     func(self, migrations_list, name)
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Error while applying migration {name}: {exc}"
-                    ) from exc
+                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             sql = "INSERT INTO applied_migrations(name) VALUES (?)"
             logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
             self.conn.execute(sql, (name,))
@@ -253,9 +246,7 @@ class SyncBaseDB(AbstractBaseDB):
                     return row[pk_col]
             self.conn.commit()
             self._on_query()
-            return row.get(
-                pk_col, self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            )
+            return row.get(pk_col, self.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
     @require_init
     def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
@@ -269,11 +260,7 @@ class SyncBaseDB(AbstractBaseDB):
             insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
             update_cols = [c for c in cols if c != pk_col]
             assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-            update_sql = (
-                f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}"
-                if update_cols
-                else ""
-            )
+            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}" if update_cols else ""
             for row in rows:
                 try:
                     self.conn.execute(insert_sql, row)
@@ -410,10 +397,12 @@ class SyncBaseDB(AbstractBaseDB):
             def get_key(row: sqlite3.Row) -> Any:
                 return row[key_str]
         else:
+
             def get_key(row: sqlite3.Row) -> Any:
                 return key(row)
 
         if value is None:
+
             def get_value(row: sqlite3.Row) -> Any:
                 return row
         elif isinstance(value, str):
@@ -422,6 +411,7 @@ class SyncBaseDB(AbstractBaseDB):
             def get_value(row: sqlite3.Row) -> Any:
                 return row[value_str]
         else:
+
             def get_value(row: sqlite3.Row) -> Any:
                 return value(row)
 
@@ -446,12 +436,12 @@ class SyncBaseDB(AbstractBaseDB):
         self.close()
 
 
-
 BaseDB = SyncBaseDB
 
 
 def __getattr__(name):
     if name == "CacheDB":
         from .cachedb import SyncCacheDB
+
         return SyncCacheDB
     raise AttributeError(name)
