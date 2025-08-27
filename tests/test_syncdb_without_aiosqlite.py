@@ -17,7 +17,7 @@ def test_syncdb_works_without_aiosqlite(monkeypatch):
 
     import scriptdb  # noqa: F401
 
-    from scriptdb import SyncBaseDB
+    from scriptdb import SyncBaseDB, SyncCacheDB
 
     class DB(SyncBaseDB):
         def migrations(self):
@@ -26,5 +26,12 @@ def test_syncdb_works_without_aiosqlite(monkeypatch):
     with DB.open(":memory:") as db:
         db.execute("SELECT 1")
 
+    with SyncCacheDB.open(":memory:") as cache:
+        cache.set("a", 1)
+        assert cache.get("a") == 1
+
     with pytest.raises(ImportError):
         from scriptdb import AsyncBaseDB  # noqa: F401
+
+    with pytest.raises(ImportError):
+        from scriptdb import AsyncCacheDB  # noqa: F401

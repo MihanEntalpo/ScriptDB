@@ -446,7 +446,7 @@ BaseDB = SyncBaseDB
 
 def __getattr__(name):
     if name == "CacheDB":
-        from .cachedb import SyncCacheDB
+        from .synccachedb import SyncCacheDB
 
         return SyncCacheDB
     raise AttributeError(name)
