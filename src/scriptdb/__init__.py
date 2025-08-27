@@ -28,8 +28,8 @@ __version__ = "1.0.2"
 # first access.
 _LAZY_ATTRS = {
     "AsyncBaseDB": ("asyncdb", "AsyncBaseDB"),
-    "AsyncCacheDB": ("cachedb", "AsyncCacheDB"),
-    "SyncCacheDB": ("cachedb", "SyncCacheDB"),
+    "AsyncCacheDB": ("asynccachedb", "AsyncCacheDB"),
+    "SyncCacheDB": ("synccachedb", "SyncCacheDB"),
 }
 
 
@@ -37,8 +37,9 @@ def __getattr__(name: str):
     """Dynamically import optional components.
 
     ``AsyncBaseDB`` depends on :mod:`aiosqlite`, so we delay importing it until
-    needed.  The cache database variants live in :mod:`cachedb` and are loaded
-    on demand as well.  All other public names are imported eagerly above.
+    needed.  The cache database variants live in their own modules and are
+    loaded on demand as well.  All other public names are imported eagerly
+    above.
     """
 
     if name in _LAZY_ATTRS:
