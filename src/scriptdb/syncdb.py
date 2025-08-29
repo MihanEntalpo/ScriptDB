@@ -62,6 +62,7 @@ class SyncBaseDB(AbstractBaseDB):
         self._periodic_threads: List[threading.Thread] = []
         self._stop_event = threading.Event()
         self._upsert_lock = threading.Lock()
+        self._close_lock = threading.Lock()
 
     @classmethod
     def open(
@@ -422,15 +423,23 @@ class SyncBaseDB(AbstractBaseDB):
 
         return {get_key(row): get_value(row) for row in rows}
 
-    @require_init
     def close(self) -> None:
-        self._stop_event.set()
-        for t in self._periodic_threads:
-            t.join(timeout=0)
-        self._periodic_threads.clear()
-        if self.conn:
-            self.conn.close()
-        self.initialized = False
+        """Close the database connection.
+
+        The method is idempotent and protected by a lock so it can be invoked
+        multiple times safely from different threads or signal handlers.
+        """
+        with self._close_lock:
+            if not self.initialized and self.conn is None:
+                return
+            self._stop_event.set()
+            for t in self._periodic_threads:
+                t.join(timeout=0)
+            self._periodic_threads.clear()
+            if self.conn:
+                self.conn.close()
+                self.conn = cast(sqlite3.Connection, None)
+            self.initialized = False
 
     def __enter__(self: T) -> T:
         if not self.initialized:

@@ -1,5 +1,7 @@
 # Changelog of the ScriptDB
 
+## 1.0.5 - Handle database close on interrupts
+
 ## 1.0.4 - Added tests and docs
 
 ## 1.0.3 - Typing and linting
