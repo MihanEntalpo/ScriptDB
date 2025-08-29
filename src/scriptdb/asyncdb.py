@@ -137,6 +137,7 @@ class AsyncBaseDB(AbstractBaseDB):
         self._periodic_tasks: List[asyncio.Task] = []
         self._query_tasks: List[asyncio.Task] = []
         self._upsert_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
         self._signal_loop: Optional[asyncio.AbstractEventLoop] = None
         self._signals_registered = False
 
@@ -704,30 +705,36 @@ class AsyncBaseDB(AbstractBaseDB):
 
         return {get_key(row): get_value(row) for row in rows}
 
-    @require_init
     async def close(self) -> None:
-        """
-        Close the database connection.
-        """
-        if self._signals_registered and self._signal_loop is not None:
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                self._signal_loop.remove_signal_handler(sig)
-            self._signals_registered = False
-            self._signal_loop = None
-        for task in self._periodic_tasks:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        self._periodic_tasks.clear()
+        """Close the database connection.
 
-        for task in list(self._query_tasks):
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        self._query_tasks.clear()
-        if self.conn:
-            await self.conn.close()
-        self.initialized = False
+        The method is idempotent and guarded by a lock so it can be safely
+        invoked multiple times, including concurrently via signal handlers
+        while an ``async with`` context is exiting.
+        """
+        async with self._close_lock:
+            if not self.initialized and self.conn is None:
+                return
+            if self._signals_registered and self._signal_loop is not None:
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    self._signal_loop.remove_signal_handler(sig)
+                self._signals_registered = False
+                self._signal_loop = None
+            for task in self._periodic_tasks:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            self._periodic_tasks.clear()
+
+            for task in list(self._query_tasks):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            self._query_tasks.clear()
+            if self.conn:
+                await self.conn.close()
+                self.conn = cast(aiosqlite.Connection, None)
+            self.initialized = False
 
     async def __aenter__(self: T) -> T:
         if not self.initialized:
