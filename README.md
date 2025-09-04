@@ -365,6 +365,11 @@ If you often forget SQLite syntax, ScriptDB includes a small helper to build
 `CREATE TABLE`, `ALTER TABLE`, and `DROP TABLE` statements programmatically.
 Unlike raw SQL, there is no syntax to memorize. Just type Builder. and let your IDE suggest the available operations.
 
+> **Warning**
+> The builder quotes identifiers to mitigate SQL injection, but options that
+> accept raw SQL snippets (such as `check=` expressions) are not sanitized.
+> Never pass untrusted user data to these parameters.
+
 ```python
 from scriptdb import Builder
 

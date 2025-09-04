@@ -4,6 +4,8 @@ import pytest
 from scriptdb import SyncBaseDB
 from scriptdb.dbbuilder import Builder, _default_literal
 
+INJECTION = 'x"; DROP TABLE safe;--'
+
 def test_create_table_builder_generates_sql():
     sql = (
         Builder.create_table("users")
@@ -272,3 +274,183 @@ def test_invalid_column_names_fail(bad_name):
     with _MemDB.open(":memory:") as db:
         with pytest.raises(ValueError):
             db.conn.executescript(sql)
+
+
+def _prepare_safe(db):
+    db.conn.executescript('CREATE TABLE safe(id INTEGER);')
+
+
+def test_create_table_name_injection():
+    inj_table = INJECTION
+    sql = Builder.create_table(inj_table).primary_key("id", int).done()
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(sql)
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names and inj_table in names
+
+
+def test_create_table_column_and_unique_injection():
+    inj_col = INJECTION
+    sql = (
+        Builder.create_table("t")
+        .primary_key("id", int)
+        .add_field(inj_col, int)
+        .unique(inj_col)
+        .done()
+    )
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(sql)
+        cols = db.query_column("SELECT name FROM pragma_table_info('t')")
+        assert inj_col in cols
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names
+
+
+def test_references_injection_in_create_table():
+    inj_table = INJECTION
+    inj_col = INJECTION + "_id"
+    ref_sql = Builder.create_table(inj_table).primary_key(inj_col, int).done()
+    main_sql = (
+        Builder.create_table("main")
+        .primary_key("id", int)
+        .add_field("ref", int, references=(inj_table, inj_col))
+        .done()
+    )
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(ref_sql)
+        db.conn.executescript(main_sql)
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert {"safe", inj_table, "main"} <= set(names)
+
+
+def test_references_injection_in_alter_table():
+    ref_table = INJECTION + "_r"
+    ref_col = INJECTION + "_id"
+    create_ref = Builder.create_table(ref_table).primary_key(ref_col, int).done()
+    create_main = Builder.create_table("main").primary_key("id", int).done()
+    alter = (
+        Builder.alter_table("main")
+        .add_column("ref", int, references=(ref_table, ref_col))
+        .done()
+    )
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_ref)
+        db.conn.executescript(create_main)
+        db.conn.executescript(alter)
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert {"safe", ref_table, "main"} <= set(names)
+
+
+def test_alter_table_with_injection_names():
+    inj_table = INJECTION
+    inj_col = INJECTION + "_c"
+    create_sql = Builder.create_table(inj_table).primary_key("id", int).done()
+    alter_sql = (
+        Builder.alter_table(inj_table)
+        .add_column(inj_col, int)
+        .rename_column(inj_col, "norm")
+        .rename_to("renamed")
+        .done()
+    )
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_sql)
+        db.conn.executescript(alter_sql)
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names and "renamed" in names
+
+
+def test_drop_column_injection():
+    inj_col = INJECTION
+    create_sql = (
+        Builder.create_table("t")
+        .primary_key("id", int)
+        .add_field(inj_col, int)
+        .done()
+    )
+    drop_sql = Builder.alter_table("t").drop_column(inj_col).done()
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_sql)
+        db.conn.executescript(drop_sql)
+        cols = db.query_column("SELECT name FROM pragma_table_info('t')")
+        assert inj_col not in cols
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names
+
+
+def test_rename_column_old_name_injection():
+    inj_col = INJECTION
+    create_sql = (
+        Builder.create_table("t")
+        .primary_key("id", int)
+        .add_field(inj_col, int)
+        .done()
+    )
+    rename_sql = Builder.alter_table("t").rename_column(inj_col, "clean").done()
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_sql)
+        db.conn.executescript(rename_sql)
+        cols = db.query_column("SELECT name FROM pragma_table_info('t')")
+        assert "clean" in cols and inj_col not in cols
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names
+
+
+def test_drop_table_name_injection():
+    inj_table = INJECTION
+    create_sql = Builder.create_table(inj_table).primary_key("id", int).done()
+    drop_sql = Builder.drop_table(inj_table).done()
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_sql)
+        db.conn.executescript(drop_sql)
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names and inj_table not in names
+
+
+def test_index_name_and_column_injection():
+    inj_idx = INJECTION
+    inj_col = INJECTION + "_c"
+    inj_table = INJECTION + "_t"
+    create_table_sql = (
+        Builder.create_table(inj_table)
+        .primary_key("id", int)
+        .add_field(inj_col, int)
+        .done()
+    )
+    index_sql = Builder.create_index(inj_idx, inj_table, on=inj_col)
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_table_sql)
+        db.conn.executescript(index_sql)
+        idxs = db.query_column("SELECT name FROM sqlite_master WHERE type='index'")
+        assert inj_idx in idxs
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names and inj_table in names
+
+
+def test_drop_index_name_injection():
+    inj_idx = INJECTION
+    create_table_sql = (
+        Builder.create_table("t")
+        .primary_key("id", int)
+        .add_field("c", int)
+        .done()
+    )
+    index_sql = Builder.create_index(inj_idx, "t", on="c")
+    drop_sql = Builder.drop_index(inj_idx)
+    with _MemDB.open(":memory:") as db:
+        _prepare_safe(db)
+        db.conn.executescript(create_table_sql)
+        db.conn.executescript(index_sql)
+        db.conn.executescript(drop_sql)
+        idxs = db.query_column("SELECT name FROM sqlite_master WHERE type='index'")
+        assert inj_idx not in idxs
+        names = db.query_column("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "safe" in names
