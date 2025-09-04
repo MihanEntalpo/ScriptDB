@@ -1,5 +1,9 @@
 # Changelog of the ScriptDB
 
+## 1.0.6 - Added simple SQL DDL queries builder
+
+- Added handy SQL DDL queries building tools
+ 
 ## 1.0.5 - Handle database close on interrupts
 
 ## 1.0.4 - Added tests and docs

@@ -359,6 +359,90 @@ Subsequent calls within 30 seconds will return the cached result without
 executing the function. You can supply `key_func` to control how the cache key
 is generated.
 
+## Simple DDL query builder
+
+If you often forget SQLite syntax, ScriptDB includes a small helper to build
+`CREATE TABLE`, `ALTER TABLE`, and `DROP TABLE` statements programmatically.
+Unlike raw SQL, there is no syntax to memorize. Just type Builder. and let your IDE suggest the available operations.
+
+```python
+from scriptdb import Builder
+
+# The following examples build SQL strings; they do not execute them.
+
+# Build query to create a table with several columns
+create_sql = (
+    Builder.create_table("users")
+    .primary_key("id", int)
+    .add_field("username", str, not_null=True)
+    .add_field("email", str)
+    .done()
+)
+
+# Build query to add new columns
+add_cols_sql = (
+    Builder.alter_table("users")
+    .add_column("age", int, default=0)
+    .add_column("created_at", int)
+    .done()
+)
+
+# Build query to remove an old column
+drop_col_sql = Builder.alter_table("users").drop_column("email").done()
+
+# Build query to create an index
+index_sql = Builder.create_index("idx_users_username", "users", on="username")
+
+# Build query to drop the table when finished
+drop_sql = Builder.drop_table("users").done()
+```
+
+These builders are convenient for defining migrations in `*BaseDB` subclasses:
+
+```python
+from scriptdb import SyncBaseDB, Builder
+
+class MyDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "create_users",
+                "sql": (
+                    Builder.create_table("users")
+                    .primary_key("id", int)
+                    .add_field("username", str, not_null=True)
+                    .add_field("email", str)
+                    .done()
+                ),
+            },
+            {
+                "name": "add_fields",
+                "sql": (
+                    Builder.alter_table("users")
+                    .add_column("age", int, default=0)
+                    .add_column("created_at", int)
+                    .done()
+                ),
+            },
+            {
+                "name": "remove_email",
+                "sql": (
+                    Builder.alter_table("users")
+                    .drop_column("email")
+                    .done()
+                ),
+            },
+            {
+                "name": "index_username",
+                "sql": Builder.create_index("idx_users_username", "users", on="username"),
+            },
+            {
+                "name": "drop_users",
+                "sql": Builder.drop_table("users").done(),
+            },
+        ]
+```
+
 ## Running tests
 
 ```bash
@@ -379,7 +463,7 @@ changes.
 ## License
 
 This project is licensed under the terms of the MIT license. See
-[LICENSE](LICENSE) for details.
+[LICENSE](https://github.com/MihanEntalpo/ScriptDB/blob/main/LICENSE) for details.
 
 ## Development
 
@@ -392,6 +476,8 @@ python -m venv venv
 source venv/bin/activate
 pip install -e .[async,test]
 ```
+
+If you don't have `make`, install it first, e.g. `sudo apt-get install make`.
 
 Before committing, ensure code passes the linters, type checks, and tests with coverage:
 
