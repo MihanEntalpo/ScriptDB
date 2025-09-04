@@ -8,12 +8,14 @@ if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:  # pragma: no cover - env g
     raise RuntimeError("ScriptDB requires SQLite >= 3.21.0")
 
 from .abstractdb import AbstractBaseDB, run_every_seconds, run_every_queries  # noqa: E402
+from .dbbuilder import Builder  # noqa: E402
 from .syncdb import SyncBaseDB  # noqa: E402
 
 __all__ = [
     "AbstractBaseDB",
     "AsyncBaseDB",  # lazy-imported via __getattr__
     "SyncBaseDB",
+    "Builder",
     "run_every_seconds",
     "run_every_queries",
     "AsyncCacheDB",  # lazy-imported via __getattr__
