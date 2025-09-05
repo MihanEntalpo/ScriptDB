@@ -36,6 +36,11 @@ def test_is_set(db):
     assert db.is_set("b") is False
 
 
+def test_keys_ignores_zero_expire(db):
+    db.set("temp", 1, expire_sec=0)
+    assert db.keys("*") == []
+
+
 def test_del_many_keys_clear(db):
     db.set("a_1", 1, 60)
     db.set("a_2", 2, 60)
