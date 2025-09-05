@@ -276,6 +276,12 @@ def test_query_dict_requires_key_when_table_unknown(db):
     assert "Cannot determine table name from sql" in str(exc.value)
 
 
+def test_query_dict_select_literal_raises_valueerror(db):
+    """query_dict with a constant select should fail without a key."""
+    with pytest.raises(ValueError):
+        db.query_dict("SELECT 1")
+
+
 def test_context_manager_closes(tmp_path):
     db_file = tmp_path / "ctx.db"
     with MyTestDB.open(str(db_file)) as db:
