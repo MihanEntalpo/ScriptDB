@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 from scriptdb import SyncBaseDB
 from scriptdb.dbbuilder import Builder, _default_literal
+from datetime import date, datetime
 
 INJECTION = 'x"; DROP TABLE safe;--'
 
@@ -58,34 +59,43 @@ def test_primary_key_auto_increment_auto_behavior():
 
 
 def test_drop_table_builder_generates_sql():
-    assert Builder.drop_table("users") == 'DROP TABLE IF EXISTS "users";'
-    assert Builder.drop_table("users", if_exists=False) == 'DROP TABLE "users";'
+    assert str(Builder.drop_table("users")) == 'DROP TABLE IF EXISTS "users";'
+    assert (
+        str(Builder.drop_table("users", if_exists=False))
+        == 'DROP TABLE "users";'
+    )
 
 
 def test_index_sql_generation():
-    create = Builder.create_index("idx_users_name", "users", on="name")
+    create = str(Builder.create_index("users", on="name", name="idx_users_name"))
     assert (
         create
         == 'CREATE INDEX IF NOT EXISTS "idx_users_name" ON "users" ("name");'
     )
-    unique = Builder.create_index(
-        "idx_users_name_age",
-        "users",
-        on=["name", "age"],
-        unique=True,
-        if_not_exists=False,
+    unique = str(
+        Builder.create_index(
+            "users",
+            on=["name", "age"],
+            unique=True,
+            if_not_exists=False,
+            name="idx_users_name_age",
+        )
     )
     assert (
         unique
         == 'CREATE UNIQUE INDEX "idx_users_name_age" ON "users" ("name", "age");'
     )
-    drop = Builder.drop_index("idx_users_name")
+    drop = str(Builder.drop_index("users", on="name", name="idx_users_name"))
     assert drop == 'DROP INDEX IF EXISTS "idx_users_name";'
+    auto = str(Builder.create_index("users", on="age"))
+    assert auto == 'CREATE INDEX IF NOT EXISTS "users_age_idx" ON "users" ("age");'
+    auto_drop = str(Builder.drop_index("users", on="age"))
+    assert auto_drop == 'DROP INDEX IF EXISTS "users_age_idx";'
 
 
 def test_create_index_requires_column():
     with pytest.raises(ValueError):
-        Builder.create_index("idx_bad", "t", on=[])
+        Builder.create_index("t", on=[], name="idx_bad")
 
 
 @pytest.mark.parametrize(
@@ -98,6 +108,8 @@ def test_create_index_requires_column():
         (3.14, "3.14"),
         (b"\x00\xff", "X'00ff'"),
         ("O'Reilly", "'O''Reilly'"),
+        (date(2020, 1, 2), "'2020-01-02'"),
+        (datetime(2020, 1, 2, 3, 4, 5), "'2020-01-02 03:04:05'"),
     ],
 )
 def test_default_literal(value, literal):
@@ -124,6 +136,17 @@ def test_create_table_builder_with_constraints():
     assert sql == expected
 
 
+def test_date_datetime_columns():
+    sql = str(
+        Builder.create_table("d")
+        .primary_key("id", int)
+        .add_field("d", date)
+        .add_field("dt", datetime)
+    )
+    assert '"d" TEXT' in sql
+    assert '"dt" TEXT' in sql
+
+
 def test_unsupported_python_type():
     with pytest.raises(ValueError):
         Builder.create_table("bad").add_field("data", dict)
@@ -146,7 +169,7 @@ def test_builder_sql_executes_via_syncdb():
         .rename_column("age", "user_age")
         .rename_to("people")
     )
-    drop_sql = Builder.drop_table("people")
+    drop_sql = str(Builder.drop_table("people"))
 
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(create_sql)
@@ -209,8 +232,8 @@ def test_index_builder_sql_executes():
         .primary_key("id", int)
         .add_field("name", str)
     )
-    create_index_sql = Builder.create_index("idx_t_name", "t", on="name")
-    drop_index_sql = Builder.drop_index("idx_t_name")
+    create_index_sql = str(Builder.create_index("t", on="name", name="idx_t_name"))
+    drop_index_sql = str(Builder.drop_index("t", on="name", name="idx_t_name"))
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(create_table_sql)
         db.conn.executescript(create_index_sql)
@@ -382,7 +405,7 @@ def test_rename_column_old_name_injection():
 def test_drop_table_name_injection():
     inj_table = INJECTION
     create_sql = str(Builder.create_table(inj_table).primary_key("id", int))
-    drop_sql = Builder.drop_table(inj_table)
+    drop_sql = str(Builder.drop_table(inj_table))
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_sql)
@@ -400,7 +423,9 @@ def test_index_name_and_column_injection():
         .primary_key("id", int)
         .add_field(inj_col, int)
     )
-    index_sql = Builder.create_index(inj_idx, inj_table, on=inj_col)
+    index_sql = str(
+        Builder.create_index(inj_table, on=inj_col, name=inj_idx)
+    )
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_table_sql)
@@ -418,8 +443,8 @@ def test_drop_index_name_injection():
         .primary_key("id", int)
         .add_field("c", int)
     )
-    index_sql = Builder.create_index(inj_idx, "t", on="c")
-    drop_sql = Builder.drop_index(inj_idx)
+    index_sql = str(Builder.create_index("t", on="c", name=inj_idx))
+    drop_sql = str(Builder.drop_index("t", on="c", name=inj_idx))
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_table_sql)

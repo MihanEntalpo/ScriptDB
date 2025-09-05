@@ -375,7 +375,9 @@ from scriptdb import Builder
 
 # The following examples build SQL strings; they do not execute them.
 # Builder objects can be rendered either by calling `.done()` or by
-# simply passing them to ``str(...)`` as shown below.
+# simply passing them to ``str(...)`` as shown below. Supported column
+# types are ``int``, ``str``, ``float``, ``bytes``, ``bool``, ``date`` and
+# ``datetime`` (date/time values are stored as TEXT in SQLite).
 
 # Build query to create a table with several columns
 create_sql = str(
@@ -397,11 +399,12 @@ add_cols_sql = (
 drop_col_sql = str(Builder.alter_table("users").drop_column("email"))
 
 # Build query to create an index
-index_sql = Builder.create_index("idx_users_username", "users", on="username")
+index_sql = str(
+    Builder.create_index("users", on="username", name="idx_users_username")
+)
 
 # Build query to drop the table when finished
-# drop_table returns the SQL string directly
-drop_sql = Builder.drop_table("users")
+drop_sql = str(Builder.drop_table("users"))
 ```
 
 These builders are convenient for defining migrations in `*BaseDB` subclasses:
@@ -437,7 +440,7 @@ class MyDB(SyncBaseDB):
             },
             {
                 "name": "index_username",
-                "sql": Builder.create_index("idx_users_username", "users", on="username"),
+                "sql": Builder.create_index("users", on="username", name="idx_users_username"),
             },
             {
                 "name": "drop_users",

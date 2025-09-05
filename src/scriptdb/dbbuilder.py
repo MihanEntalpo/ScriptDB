@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, Type, Union, Final
+from datetime import date, datetime
+from typing import Any, Final, List, Optional, Tuple, Type, Union
 
 # --- typing & mapping utilities ---
 
-_PyType = Union[Type[int], Type[str], Type[float], Type[bytes], Type[bool]]
+_PyType = Union[
+    Type[int],
+    Type[str],
+    Type[float],
+    Type[bytes],
+    Type[bool],
+    Type[date],
+    Type[datetime],
+]
 
 _SQLITE_TYPE_MAP: Final[dict[type, str]] = {
     int: "INTEGER",
@@ -13,6 +22,8 @@ _SQLITE_TYPE_MAP: Final[dict[type, str]] = {
     float: "REAL",
     str: "TEXT",
     bytes: "BLOB",
+    date: "TEXT",
+    datetime: "TEXT",
 }
 
 # Sentinel for automatic AUTOINCREMENT behaviour
@@ -109,13 +120,24 @@ class CreateTableBuilder(_SQLBuilder):
     ) -> "CreateTableBuilder":
         """Add a ``PRIMARY KEY`` column.
 
-        By default, ``AUTOINCREMENT`` is enabled for ``int`` primary keys and
-        disabled for other types. Override this behaviour by passing
-        ``auto_increment=True`` or ``False`` explicitly. ``AUTOINCREMENT`` is
-        only valid for ``INTEGER`` primary keys.
+        Parameters
+        ----------
+        name:
+            Column name.
+        py_type:
+            Python type of the column. Supported types: ``int``, ``str``,
+            ``float``, ``bytes``, ``bool``, ``date`` and ``datetime``.
+        auto_increment:
+            Enable ``AUTOINCREMENT`` for ``INTEGER`` primary keys. By default it
+            is enabled automatically for ``int`` columns and disabled for other
+            types. Pass ``True`` or ``False`` to override.
+        not_null:
+            Whether to add ``NOT NULL``. Ignored if ``auto_increment`` is true
+            because SQLite automatically implies ``NOT NULL``.
 
-        Example:
-            Builder.create_table("users").primary_key("id", int).done()
+        Example
+        -------
+        ``Builder.create_table("users").primary_key("id", int).done()``
         """
         t = _to_sqlite_type(py_type)
         auto_inc = (t == "INTEGER") if auto_increment is Auto else bool(auto_increment)
@@ -143,11 +165,28 @@ class CreateTableBuilder(_SQLBuilder):
     ) -> "CreateTableBuilder":
         """Add a column to the table definition.
 
-        Supports ``NOT NULL``, ``UNIQUE``, ``DEFAULT``, ``CHECK`` and
-        ``REFERENCES`` clauses.
+        Parameters
+        ----------
+        name:
+            Column name.
+        py_type:
+            Python type of the column. Supported types: ``int``, ``str``,
+            ``float``, ``bytes``, ``bool``, ``date`` and ``datetime``.
+        not_null:
+            If ``True`` adds a ``NOT NULL`` constraint.
+        unique:
+            If ``True`` adds a ``UNIQUE`` constraint.
+        default:
+            Default value for the column rendered as a SQLite literal.
+        check:
+            ``CHECK`` expression.
+        references:
+            ``(table, column)`` tuple for a ``REFERENCES`` clause. Pass ``(table,
+            None)`` to reference a table without specifying a column.
 
-        Example:
-            Builder.create_table("users").add_field("name", str, not_null=True).done()
+        Example
+        -------
+        ``Builder.create_table("users").add_field("name", str, not_null=True).done()``
         """
         t = _to_sqlite_type(py_type)
         parts: List[str] = [t]
@@ -170,10 +209,16 @@ class CreateTableBuilder(_SQLBuilder):
         return self
 
     def unique(self, *cols: str) -> "CreateTableBuilder":
-        """Add a table-level ``UNIQUE`` constraint over columns.
+        """Add a table-level ``UNIQUE`` constraint.
 
-        Example:
-            Builder.create_table("users").unique("email").done()
+        Parameters
+        ----------
+        cols:
+            One or more column names to include in the constraint.
+
+        Example
+        -------
+        ``Builder.create_table("users").unique("email").done()``
         """
         if not cols:
             raise ValueError("UNIQUE requires at least one column")
@@ -184,8 +229,14 @@ class CreateTableBuilder(_SQLBuilder):
     def check(self, expr: str) -> "CreateTableBuilder":
         """Add a table-level ``CHECK`` constraint.
 
-        Example:
-            Builder.create_table("numbers").check("value > 0").done()
+        Parameters
+        ----------
+        expr:
+            Expression evaluated for each row.
+
+        Example
+        -------
+        ``Builder.create_table("numbers").check("value > 0").done()``
         """
         self._st.table_constraints.append(f"CHECK ({expr})")
         return self
@@ -237,8 +288,28 @@ class AlterTableBuilder(_SQLBuilder):
     ) -> "AlterTableBuilder":
         """Queue an ``ADD COLUMN`` action.
 
-        Example:
-            Builder.alter_table("users").add_column("age", int, default=0).done()
+        Parameters
+        ----------
+        name:
+            Column name to add.
+        py_type:
+            Python type of the column. Supported types: ``int``, ``str``,
+            ``float``, ``bytes``, ``bool``, ``date`` and ``datetime``.
+        not_null:
+            If ``True`` adds a ``NOT NULL`` constraint.
+        unique:
+            If ``True`` adds a ``UNIQUE`` constraint.
+        default:
+            Default value for the column rendered as a SQLite literal.
+        check:
+            ``CHECK`` expression.
+        references:
+            ``(table, column)`` tuple for a ``REFERENCES`` clause. Pass ``(table,
+            None)`` to reference a table without specifying a column.
+
+        Example
+        -------
+        ``Builder.alter_table("users").add_column("age", int, default=0).done()``
         """
         t = _to_sqlite_type(py_type)
         parts: List[str] = [t]
@@ -267,8 +338,14 @@ class AlterTableBuilder(_SQLBuilder):
     def drop_column(self, name: str) -> "AlterTableBuilder":
         """Queue a ``DROP COLUMN`` action.
 
-        Example:
-            Builder.alter_table("users").drop_column("email").done()
+        Parameters
+        ----------
+        name:
+            Column name to drop.
+
+        Example
+        -------
+        ``Builder.alter_table("users").drop_column("email").done()``
         """
         self._actions.append(
             _AlterTableAction(
@@ -280,8 +357,14 @@ class AlterTableBuilder(_SQLBuilder):
     def rename_to(self, new_table_name: str) -> "AlterTableBuilder":
         """Queue a ``RENAME TO`` action to rename the table.
 
-        Example:
-            Builder.alter_table("users").rename_to("customers").done()
+        Parameters
+        ----------
+        new_table_name:
+            New table name.
+
+        Example
+        -------
+        ``Builder.alter_table("users").rename_to("customers").done()``
         """
         self._actions.append(
             _AlterTableAction(
@@ -294,8 +377,16 @@ class AlterTableBuilder(_SQLBuilder):
     def rename_column(self, old_name: str, new_name: str) -> "AlterTableBuilder":
         """Queue a ``RENAME COLUMN`` action.
 
-        Example:
-            Builder.alter_table("users").rename_column("name", "username").done()
+        Parameters
+        ----------
+        old_name:
+            Existing column name.
+        new_name:
+            New column name.
+
+        Example
+        -------
+        ``Builder.alter_table("users").rename_column("name", "username").done()``
         """
         self._actions.append(
             _AlterTableAction(
@@ -318,6 +409,94 @@ class AlterTableBuilder(_SQLBuilder):
         return "\n".join(a.sql for a in self._actions)
 
 
+class DropTableBuilder(_SQLBuilder):
+    """Builder for ``DROP TABLE`` statements."""
+
+    __slots__ = ("_table", "_if_exists")
+
+    def __init__(self, table: str, *, if_exists: bool = True) -> None:
+        self._table = table
+        self._if_exists = if_exists
+
+    def done(self) -> str:
+        """Render the ``DROP TABLE`` statement."""
+        ie = " IF EXISTS" if self._if_exists else ""
+        return f"DROP TABLE{ie} {_quote_ident(self._table)};"
+
+
+class CreateIndexBuilder(_SQLBuilder):
+    """Builder for ``CREATE INDEX`` statements."""
+
+    __slots__ = (
+        "_name",
+        "_table",
+        "_columns",
+        "_unique",
+        "_if_not_exists",
+    )
+
+    def __init__(
+        self,
+        table: str,
+        columns: List[str],
+        *,
+        unique: bool = False,
+        if_not_exists: bool = True,
+        name: Optional[str] = None,
+    ) -> None:
+        if not columns:
+            raise ValueError("CREATE INDEX requires at least one column")
+        self._table = table
+        self._columns = columns
+        self._unique = unique
+        self._if_not_exists = if_not_exists
+        self._name = name or f"{table}_{'_'.join(columns)}_idx"
+
+    def done(self) -> str:
+        """Render the ``CREATE INDEX`` statement."""
+        cols_sql = ", ".join(_quote_ident(c) for c in self._columns)
+        ine = " IF NOT EXISTS" if self._if_not_exists else ""
+        unique_sql = "UNIQUE " if self._unique else ""
+        return (
+            f"CREATE {unique_sql}INDEX{ine} {_quote_ident(self._name)} "
+            f"ON {_quote_ident(self._table)} ({cols_sql});"
+        )
+
+
+class DropIndexBuilder(_SQLBuilder):
+    """Builder for ``DROP INDEX`` statements."""
+
+    __slots__ = ("_name", "_if_exists")
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        if_exists: bool = True,
+    ) -> None:
+        self._name = name
+        self._if_exists = if_exists
+
+    @classmethod
+    def from_table(
+        cls,
+        table: str,
+        columns: List[str],
+        *,
+        if_exists: bool = True,
+        name: Optional[str] = None,
+    ) -> "DropIndexBuilder":
+        if not columns and name is None:
+            raise ValueError("DROP INDEX requires at least one column for automatic naming")
+        idx_name = name or f"{table}_{'_'.join(columns)}_idx"
+        return cls(idx_name, if_exists=if_exists)
+
+    def done(self) -> str:
+        """Render the ``DROP INDEX`` statement."""
+        ie = " IF EXISTS" if self._if_exists else ""
+        return f"DROP INDEX{ie} {_quote_ident(self._name)};"
+
+
 
 
 class Builder:
@@ -325,17 +504,27 @@ class Builder:
       Entry points with explicit return types for solid autocompletion:
         - Builder.create_table(name, *, if_not_exists=True, without_rowid=False) -> CreateTableBuilder
         - Builder.alter_table(name) -> AlterTableBuilder
-        - Builder.drop_table(name, *, if_exists=True) -> str
-        - Builder.create_index(name, table, *, on, unique=False, if_not_exists=True) -> str
-        - Builder.drop_index(name, *, if_exists=True) -> str
+        - Builder.drop_table(name, *, if_exists=True) -> DropTableBuilder
+        - Builder.create_index(table, on, *, unique=False, if_not_exists=True, name=None) -> CreateIndexBuilder
+        - Builder.drop_index(table, on, *, if_exists=True, name=None) -> DropIndexBuilder
     """
 
     @staticmethod
     def create_table(name: str, *, if_not_exists: bool = True, without_rowid: bool = False) -> CreateTableBuilder:
         """Start building a ``CREATE TABLE`` statement.
 
-        Example:
-            Builder.create_table("users").done()
+        Parameters
+        ----------
+        name:
+            Table name.
+        if_not_exists:
+            Add ``IF NOT EXISTS`` to the statement if ``True``.
+        without_rowid:
+            Append ``WITHOUT ROWID`` to the statement if ``True``.
+
+        Example
+        -------
+        ``Builder.create_table("users").done()``
         """
         return CreateTableBuilder(name, if_not_exists=if_not_exists, without_rowid=without_rowid)
 
@@ -343,49 +532,91 @@ class Builder:
     def alter_table(name: str) -> AlterTableBuilder:
         """Start an ``ALTER TABLE`` builder for the given table.
 
-        Example:
-            Builder.alter_table("users").add_column("age", int).done()
+        Parameters
+        ----------
+        name:
+            Table name to alter.
+
+        Example
+        -------
+        ``Builder.alter_table("users").add_column("age", int).done()``
         """
         return AlterTableBuilder(name)
 
     @staticmethod
-    def drop_table(name: str, *, if_exists: bool = True) -> str:
-        """Return a ``DROP TABLE`` statement."""
+    def drop_table(name: str, *, if_exists: bool = True) -> DropTableBuilder:
+        """Start a ``DROP TABLE`` builder for the given table.
 
-        ie = " IF EXISTS" if if_exists else ""
-        return f"DROP TABLE{ie} {_quote_ident(name)};"
+        Parameters
+        ----------
+        name:
+            Table name to drop.
+        if_exists:
+            Add ``IF EXISTS`` if ``True``.
+        """
+
+        return DropTableBuilder(name, if_exists=if_exists)
 
     @staticmethod
     def create_index(
-        name: str,
         table: str,
-        *,
         on: Union[str, List[str]],
+        *,
         unique: bool = False,
         if_not_exists: bool = True,
-    ) -> str:
-        """Generate a ``CREATE INDEX`` statement.
+        name: Optional[str] = None,
+    ) -> CreateIndexBuilder:
+        """Start building a ``CREATE INDEX`` statement.
 
-        Example:
-            Builder.create_index("idx_users_name", "users", on="name")
+        Parameters
+        ----------
+        table:
+            Table on which to create the index.
+        on:
+            Column name or list of column names to index.
+        unique:
+            If ``True`` create a ``UNIQUE`` index.
+        if_not_exists:
+            Add ``IF NOT EXISTS`` if ``True``.
+        name:
+            Optional explicit index name. If omitted, the name is constructed as
+            ``"{table}_{cols_joined}_idx"``.
         """
         columns = [on] if isinstance(on, str) else list(on)
-        if not columns:
-            raise ValueError("CREATE INDEX requires at least one column")
-        cols_sql = ", ".join(_quote_ident(c) for c in columns)
-        ine = " IF NOT EXISTS" if if_not_exists else ""
-        unique_sql = "UNIQUE " if unique else ""
-        return (
-            f"CREATE {unique_sql}INDEX{ine} {_quote_ident(name)} "
-            f"ON {_quote_ident(table)} ({cols_sql});"
+        return CreateIndexBuilder(
+            table,
+            columns,
+            unique=unique,
+            if_not_exists=if_not_exists,
+            name=name,
         )
 
     @staticmethod
-    def drop_index(name: str, *, if_exists: bool = True) -> str:
-        """Generate a ``DROP INDEX`` statement.
+    def drop_index(
+        table: str,
+        on: Union[str, List[str]],
+        *,
+        if_exists: bool = True,
+        name: Optional[str] = None,
+    ) -> DropIndexBuilder:
+        """Start building a ``DROP INDEX`` statement.
 
-        Example:
-            Builder.drop_index("idx_users_name")
+        Parameters
+        ----------
+        table:
+            Table the index belongs to.
+        on:
+            Column name or list of column names that were indexed.
+        if_exists:
+            Add ``IF EXISTS`` if ``True``.
+        name:
+            Explicit index name. If omitted, the name is constructed as in
+            :py:meth:`create_index`.
         """
-        ie = " IF EXISTS" if if_exists else ""
-        return f"DROP INDEX{ie} {_quote_ident(name)};"
+        columns = [on] if isinstance(on, str) else list(on)
+        return DropIndexBuilder.from_table(
+            table,
+            columns,
+            if_exists=if_exists,
+            name=name,
+        )
