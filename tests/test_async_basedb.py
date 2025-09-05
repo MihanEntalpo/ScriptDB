@@ -268,6 +268,17 @@ async def test_query_dict(db):
 
 
 @pytest.mark.asyncio
+async def test_query_dict_key_value_callables(db):
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,)])
+    result = await db.query_dict(
+        "SELECT id, x FROM t",
+        key=lambda row: row["id"],
+        value=lambda row: row["x"],
+    )
+    assert result == {1: 1, 2: 2}
+
+
+@pytest.mark.asyncio
 async def test_query_dict_requires_key_when_table_unknown(db):
     with pytest.raises(ValueError) as exc:
         await db.query_dict("SELECT 1")

@@ -252,6 +252,16 @@ def test_query_dict(db):
     assert set(quoted.keys()) == {1, 2}
 
 
+def test_query_dict_key_value_callables(db):
+    db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,)])
+    result = db.query_dict(
+        "SELECT id, x FROM t",
+        key=lambda row: row["id"],
+        value=lambda row: row["x"],
+    )
+    assert result == {1: 1, 2: 2}
+
+
 def test_query_dict_requires_key_when_table_unknown(db):
     with pytest.raises(ValueError) as exc:
         db.query_dict("SELECT 1")
