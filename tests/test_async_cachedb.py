@@ -41,6 +41,12 @@ async def test_is_set(db):
 
 
 @pytest.mark.asyncio
+async def test_keys_ignores_zero_expire(db):
+    await db.set("temp", 1, expire_sec=0)
+    assert await db.keys("*") == []
+
+
+@pytest.mark.asyncio
 async def test_del_many_keys_clear(db):
     await db.set("a_1", 1, 60)
     await db.set("a_2", 2, 60)
