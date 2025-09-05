@@ -374,14 +374,15 @@ Unlike raw SQL, there is no syntax to memorize. Just type Builder. and let your 
 from scriptdb import Builder
 
 # The following examples build SQL strings; they do not execute them.
+# Builder objects can be rendered either by calling `.done()` or by
+# simply passing them to ``str(...)`` as shown below.
 
 # Build query to create a table with several columns
-create_sql = (
+create_sql = str(
     Builder.create_table("users")
     .primary_key("id", int)
     .add_field("username", str, not_null=True)
     .add_field("email", str)
-    .done()
 )
 
 # Build query to add new columns
@@ -389,20 +390,23 @@ add_cols_sql = (
     Builder.alter_table("users")
     .add_column("age", int, default=0)
     .add_column("created_at", int)
-    .done()
+    .done()  # could also render with str(...) instead of .done()
 )
 
 # Build query to remove an old column
-drop_col_sql = Builder.alter_table("users").drop_column("email").done()
+drop_col_sql = str(Builder.alter_table("users").drop_column("email"))
 
 # Build query to create an index
 index_sql = Builder.create_index("idx_users_username", "users", on="username")
 
 # Build query to drop the table when finished
-drop_sql = Builder.drop_table("users").done()
+# drop_table returns the SQL string directly
+drop_sql = Builder.drop_table("users")
 ```
 
 These builders are convenient for defining migrations in `*BaseDB` subclasses:
+they can be passed directly without calling ``done()`` because ScriptDB will
+automatically convert them to SQL strings.
 
 ```python
 from scriptdb import SyncBaseDB, Builder
@@ -417,7 +421,6 @@ class MyDB(SyncBaseDB):
                     .primary_key("id", int)
                     .add_field("username", str, not_null=True)
                     .add_field("email", str)
-                    .done()
                 ),
             },
             {
@@ -426,16 +429,11 @@ class MyDB(SyncBaseDB):
                     Builder.alter_table("users")
                     .add_column("age", int, default=0)
                     .add_column("created_at", int)
-                    .done()
                 ),
             },
             {
                 "name": "remove_email",
-                "sql": (
-                    Builder.alter_table("users")
-                    .drop_column("email")
-                    .done()
-                ),
+                "sql": Builder.alter_table("users").drop_column("email"),
             },
             {
                 "name": "index_username",
@@ -443,7 +441,7 @@ class MyDB(SyncBaseDB):
             },
             {
                 "name": "drop_users",
-                "sql": Builder.drop_table("users").done(),
+                "sql": Builder.drop_table("users"),
             },
         ]
 ```

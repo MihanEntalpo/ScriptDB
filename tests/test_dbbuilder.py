@@ -7,13 +7,12 @@ from scriptdb.dbbuilder import Builder, _default_literal
 INJECTION = 'x"; DROP TABLE safe;--'
 
 def test_create_table_builder_generates_sql():
-    sql = (
+    sql = str(
         Builder.create_table("users")
         .primary_key("id", int)
         .add_field("name", str, not_null=True)
         .add_field("is_active", bool, default=False, not_null=True)
         .unique("name")
-        .done()
     )
     expected_sql = (
         'CREATE TABLE IF NOT EXISTS "users" ('
@@ -26,12 +25,11 @@ def test_create_table_builder_generates_sql():
 
 
 def test_alter_table_builder_generates_sql():
-    sql = (
+    sql = str(
         Builder.alter_table("users")
         .add_column("age", int, not_null=True, default=0)
         .rename_column("age", "user_age")
         .rename_to("people")
-        .done()
     )
     expected_sql = (
         'ALTER TABLE "users" ADD COLUMN "age" INTEGER NOT NULL DEFAULT 0;'
@@ -42,7 +40,7 @@ def test_alter_table_builder_generates_sql():
 
 
 def test_drop_column_builder_generates_sql():
-    sql = Builder.alter_table("users").drop_column("old").done()
+    sql = str(Builder.alter_table("users").drop_column("old"))
     assert sql == 'ALTER TABLE "users" DROP COLUMN "old";'
 
 
@@ -53,21 +51,15 @@ def test_primary_key_autoincrement_requires_integer():
 
 
 def test_primary_key_auto_increment_auto_behavior():
-    sql_int = Builder.create_table("t").primary_key("id", int).done()
+    sql_int = str(Builder.create_table("t").primary_key("id", int))
     assert "AUTOINCREMENT" in sql_int
-    sql_text = Builder.create_table("t").primary_key("name", str).done()
+    sql_text = str(Builder.create_table("t").primary_key("name", str))
     assert "AUTOINCREMENT" not in sql_text
 
 
 def test_drop_table_builder_generates_sql():
-    assert (
-        Builder.drop_table("users").done()
-        == 'DROP TABLE IF EXISTS "users";'
-    )
-    assert (
-        Builder.drop_table("users", if_exists=False).done()
-        == 'DROP TABLE "users";'
-    )
+    assert Builder.drop_table("users") == 'DROP TABLE IF EXISTS "users";'
+    assert Builder.drop_table("users", if_exists=False) == 'DROP TABLE "users";'
 
 
 def test_index_sql_generation():
@@ -113,14 +105,13 @@ def test_default_literal(value, literal):
 
 
 def test_create_table_builder_with_constraints():
-    sql = (
+    sql = str(
         Builder.create_table("articles", if_not_exists=False, without_rowid=True)
         .primary_key("id", int)
         .add_field("author_id", int, not_null=True, references=("users", "id"))
         .add_field("title", str, unique=True, default="Untitled")
         .unique("author_id", "title")
         .check("length(title) > 0")
-        .done()
     )
     expected = (
         'CREATE TABLE "articles" ('
@@ -144,20 +135,18 @@ class _MemDB(SyncBaseDB):
 
 
 def test_builder_sql_executes_via_syncdb():
-    create_sql = (
+    create_sql = str(
         Builder.create_table("users")
         .primary_key("id", int)
         .add_field("name", str)
-        .done()
     )
-    alter_sql = (
+    alter_sql = str(
         Builder.alter_table("users")
         .add_column("age", int, default=0)
         .rename_column("age", "user_age")
         .rename_to("people")
-        .done()
     )
-    drop_sql = Builder.drop_table("people").done()
+    drop_sql = Builder.drop_table("people")
 
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(create_sql)
@@ -174,13 +163,12 @@ def test_builder_sql_executes_via_syncdb():
 
 
 def test_drop_column_executes():
-    create_sql = (
+    create_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field("old", int)
-        .done()
     )
-    drop_sql = Builder.alter_table("t").drop_column("old").done()
+    drop_sql = str(Builder.alter_table("t").drop_column("old"))
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(create_sql)
         db.conn.executescript(drop_sql)
@@ -189,20 +177,18 @@ def test_drop_column_executes():
 
 
 def test_alter_table_multiple_actions_execute():
-    create_sql = (
+    create_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field("name", str)
-        .done()
     )
-    alter_sql = (
+    alter_sql = str(
         Builder.alter_table("t")
         .add_column("age", int, default=0)
         .add_column("temp", str)
         .drop_column("temp")
         .rename_column("name", "username")
         .rename_to("people")
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(create_sql)
@@ -218,11 +204,10 @@ def test_alter_table_multiple_actions_execute():
 
 
 def test_index_builder_sql_executes():
-    create_table_sql = (
+    create_table_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field("name", str)
-        .done()
     )
     create_index_sql = Builder.create_index("idx_t_name", "t", on="name")
     drop_index_sql = Builder.drop_index("idx_t_name")
@@ -251,11 +236,10 @@ def test_index_builder_sql_executes():
     ],
 )
 def test_weird_column_names_execute(col_name):
-    sql = (
+    sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field(col_name, str)
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         db.conn.executescript(sql)
@@ -265,11 +249,10 @@ def test_weird_column_names_execute(col_name):
 
 @pytest.mark.parametrize("bad_name", ["\x00bad"])
 def test_invalid_column_names_fail(bad_name):
-    sql = (
+    sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field(bad_name, int)
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         with pytest.raises(ValueError):
@@ -282,7 +265,7 @@ def _prepare_safe(db):
 
 def test_create_table_name_injection():
     inj_table = INJECTION
-    sql = Builder.create_table(inj_table).primary_key("id", int).done()
+    sql = str(Builder.create_table(inj_table).primary_key("id", int))
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(sql)
@@ -292,12 +275,11 @@ def test_create_table_name_injection():
 
 def test_create_table_column_and_unique_injection():
     inj_col = INJECTION
-    sql = (
+    sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field(inj_col, int)
         .unique(inj_col)
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
@@ -311,12 +293,11 @@ def test_create_table_column_and_unique_injection():
 def test_references_injection_in_create_table():
     inj_table = INJECTION
     inj_col = INJECTION + "_id"
-    ref_sql = Builder.create_table(inj_table).primary_key(inj_col, int).done()
-    main_sql = (
+    ref_sql = str(Builder.create_table(inj_table).primary_key(inj_col, int))
+    main_sql = str(
         Builder.create_table("main")
         .primary_key("id", int)
         .add_field("ref", int, references=(inj_table, inj_col))
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
@@ -329,12 +310,11 @@ def test_references_injection_in_create_table():
 def test_references_injection_in_alter_table():
     ref_table = INJECTION + "_r"
     ref_col = INJECTION + "_id"
-    create_ref = Builder.create_table(ref_table).primary_key(ref_col, int).done()
-    create_main = Builder.create_table("main").primary_key("id", int).done()
-    alter = (
+    create_ref = str(Builder.create_table(ref_table).primary_key(ref_col, int))
+    create_main = str(Builder.create_table("main").primary_key("id", int))
+    alter = str(
         Builder.alter_table("main")
         .add_column("ref", int, references=(ref_table, ref_col))
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
@@ -348,13 +328,12 @@ def test_references_injection_in_alter_table():
 def test_alter_table_with_injection_names():
     inj_table = INJECTION
     inj_col = INJECTION + "_c"
-    create_sql = Builder.create_table(inj_table).primary_key("id", int).done()
-    alter_sql = (
+    create_sql = str(Builder.create_table(inj_table).primary_key("id", int))
+    alter_sql = str(
         Builder.alter_table(inj_table)
         .add_column(inj_col, int)
         .rename_column(inj_col, "norm")
         .rename_to("renamed")
-        .done()
     )
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
@@ -366,13 +345,12 @@ def test_alter_table_with_injection_names():
 
 def test_drop_column_injection():
     inj_col = INJECTION
-    create_sql = (
+    create_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field(inj_col, int)
-        .done()
     )
-    drop_sql = Builder.alter_table("t").drop_column(inj_col).done()
+    drop_sql = str(Builder.alter_table("t").drop_column(inj_col))
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_sql)
@@ -385,13 +363,12 @@ def test_drop_column_injection():
 
 def test_rename_column_old_name_injection():
     inj_col = INJECTION
-    create_sql = (
+    create_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field(inj_col, int)
-        .done()
     )
-    rename_sql = Builder.alter_table("t").rename_column(inj_col, "clean").done()
+    rename_sql = str(Builder.alter_table("t").rename_column(inj_col, "clean"))
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_sql)
@@ -404,8 +381,8 @@ def test_rename_column_old_name_injection():
 
 def test_drop_table_name_injection():
     inj_table = INJECTION
-    create_sql = Builder.create_table(inj_table).primary_key("id", int).done()
-    drop_sql = Builder.drop_table(inj_table).done()
+    create_sql = str(Builder.create_table(inj_table).primary_key("id", int))
+    drop_sql = Builder.drop_table(inj_table)
     with _MemDB.open(":memory:") as db:
         _prepare_safe(db)
         db.conn.executescript(create_sql)
@@ -418,11 +395,10 @@ def test_index_name_and_column_injection():
     inj_idx = INJECTION
     inj_col = INJECTION + "_c"
     inj_table = INJECTION + "_t"
-    create_table_sql = (
+    create_table_sql = str(
         Builder.create_table(inj_table)
         .primary_key("id", int)
         .add_field(inj_col, int)
-        .done()
     )
     index_sql = Builder.create_index(inj_idx, inj_table, on=inj_col)
     with _MemDB.open(":memory:") as db:
@@ -437,11 +413,10 @@ def test_index_name_and_column_injection():
 
 def test_drop_index_name_injection():
     inj_idx = INJECTION
-    create_table_sql = (
+    create_table_sql = str(
         Builder.create_table("t")
         .primary_key("id", int)
         .add_field("c", int)
-        .done()
     )
     index_sql = Builder.create_index(inj_idx, "t", on="c")
     drop_sql = Builder.drop_index(inj_idx)

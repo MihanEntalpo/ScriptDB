@@ -1,4 +1,5 @@
 import time
+import sqlite3
 import pytest
 import sys
 import pathlib
@@ -76,6 +77,35 @@ def test_execute_many_and_query_many(db):
     db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     rows = db.query_many("SELECT x FROM t ORDER BY x")
     assert [r["x"] for r in rows] == [1, 2, 3]
+
+
+class _BadSQLsDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "bad",
+                "sqls": [
+                    "CREATE TABLE t(id INTEGER)",
+                    "INSERT INTO missing VALUES(1)",
+                ],
+            }
+        ]
+
+
+def test_sqls_migration_rollback(tmp_path):
+    db_file = tmp_path / "bad.db"
+    with pytest.raises(RuntimeError):
+        with _BadSQLsDB.open(db_file):
+            pass
+    conn = sqlite3.connect(db_file)
+    try:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='t'"
+        )
+        row = cur.fetchone()
+        assert row is None
+    finally:
+        conn.close()
 
 
 def test_insert_one(db):

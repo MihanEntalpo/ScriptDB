@@ -62,7 +62,19 @@ class _CreateTableState:
     table_constraints: List[str] = field(default_factory=list)
 
 
-class CreateTableBuilder:
+class _SQLBuilder:
+    """Common base class for SQL builder objects."""
+
+    __slots__ = ()
+
+    def done(self) -> str:
+        raise NotImplementedError
+
+    def __str__(self) -> str:  # pragma: no cover - simple delegation
+        return self.done()
+
+
+class CreateTableBuilder(_SQLBuilder):
     """
     Builder for CREATE TABLE.
     The chain returns this concrete class to keep IDE autocompletion precise.
@@ -201,7 +213,7 @@ class _AlterTableAction:
     sql: str
 
 
-class AlterTableBuilder:
+class AlterTableBuilder(_SQLBuilder):
     """
     Builder for ALTER TABLE. Emits one or more statements on .done().
     """
@@ -306,35 +318,16 @@ class AlterTableBuilder:
         return "\n".join(a.sql for a in self._actions)
 
 
-class DropTableBuilder:
-    """Builder for ``DROP TABLE`` statements."""
-
-    __slots__ = ("_table", "_if_exists")
-
-    def __init__(self, table: str, *, if_exists: bool = True) -> None:
-        self._table = table
-        self._if_exists = if_exists
-
-    def done(self) -> str:
-        """Render the ``DROP TABLE`` statement.
-
-        Example:
-            Builder.drop_table("temp").done()
-        """
-        ie = " IF EXISTS" if self._if_exists else ""
-        return f"DROP TABLE{ie} {_quote_ident(self._table)};"
-
-
 
 
 class Builder:
     """
-    Entry points with explicit return types for solid autocompletion:
-      - Builder.create_table(name, *, if_not_exists=True, without_rowid=False) -> CreateTableBuilder
-      - Builder.alter_table(name) -> AlterTableBuilder
-      - Builder.drop_table(name, *, if_exists=True) -> DropTableBuilder
-      - Builder.create_index(name, table, *, on, unique=False, if_not_exists=True) -> str
-      - Builder.drop_index(name, *, if_exists=True) -> str
+      Entry points with explicit return types for solid autocompletion:
+        - Builder.create_table(name, *, if_not_exists=True, without_rowid=False) -> CreateTableBuilder
+        - Builder.alter_table(name) -> AlterTableBuilder
+        - Builder.drop_table(name, *, if_exists=True) -> str
+        - Builder.create_index(name, table, *, on, unique=False, if_not_exists=True) -> str
+        - Builder.drop_index(name, *, if_exists=True) -> str
     """
 
     @staticmethod
@@ -356,13 +349,11 @@ class Builder:
         return AlterTableBuilder(name)
 
     @staticmethod
-    def drop_table(name: str, *, if_exists: bool = True) -> DropTableBuilder:
-        """Start a ``DROP TABLE`` builder.
+    def drop_table(name: str, *, if_exists: bool = True) -> str:
+        """Return a ``DROP TABLE`` statement."""
 
-        Example:
-            Builder.drop_table("temp").done()
-        """
-        return DropTableBuilder(name, if_exists=if_exists)
+        ie = " IF EXISTS" if if_exists else ""
+        return f"DROP TABLE{ie} {_quote_ident(name)};"
 
     @staticmethod
     def create_index(

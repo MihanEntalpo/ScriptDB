@@ -23,6 +23,7 @@ from typing import (
 )
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
+from .dbbuilder import _SQLBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -118,23 +119,44 @@ class SyncBaseDB(AbstractBaseDB):
         for mig in self._validate_migrations(migrations_list, applied):
             name = mig["name"]
             if "sql" in mig:
+                sql = mig["sql"]
+                if isinstance(sql, _SQLBuilder):
+                    sql = str(sql)
+                if not isinstance(sql, str):
+                    raise TypeError(
+                        f"'sql' for migration {name} must be a string or SQL builder instance"
+                    )
                 try:
-                    logger.debug("Applying migration by executing SQL script: %s", mig["sql"])
-                    self.conn.executescript(mig["sql"])
+                    logger.debug("Applying migration by executing SQL script: %s", sql)
+                    self.conn.executescript(sql)
                 except Exception as exc:
                     raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             elif "sqls" in mig:
                 sqls = mig["sqls"]
-                if (
-                    not isinstance(sqls, Sequence)
-                    or isinstance(sqls, (str, bytes))
-                    or not all(isinstance(s, str) for s in sqls)
-                ):
-                    raise TypeError(f"'sqls' for migration {name} must be a sequence of strings")
+                if not isinstance(sqls, Sequence) or isinstance(sqls, (str, bytes)):
+                    raise TypeError(
+                        f"'sqls' for migration {name} must be a sequence of strings or SQL builder instances"
+                    )
+                rendered: List[str] = []
+                for sql in sqls:
+                    if isinstance(sql, _SQLBuilder):
+                        sql = str(sql)
+                    if not isinstance(sql, str):
+                        raise TypeError(
+                            f"'sqls' for migration {name} must contain only strings or SQL builder instances"
+                        )
+                    rendered.append(sql)
                 try:
-                    for sql in sqls:
-                        logger.debug("Applying migration by executing SQL script: %s", sql)
-                        self.conn.executescript(sql)
+                    self.conn.execute("BEGIN")
+                    try:
+                        for sql in rendered:
+                            logger.debug("Applying migration by executing SQL script: %s", sql)
+                            self.conn.execute(sql)
+                    except BaseException:
+                        self.conn.rollback()
+                        raise
+                    else:
+                        self.conn.commit()
                 except Exception as exc:
                     raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             else:
