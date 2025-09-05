@@ -211,6 +211,15 @@ async def test_update_one(db):
 
 
 @pytest.mark.asyncio
+async def test_update_one_empty_dict(db):
+    pk = await db.insert_one("t", {"x": 1})
+    updated = await db.update_one("t", pk, {})
+    assert updated == 0
+    row = await db.query_one("SELECT x FROM t WHERE id=?", (pk,))
+    assert row["x"] == 1
+
+
+@pytest.mark.asyncio
 async def test_query_many_gen(db):
     await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []

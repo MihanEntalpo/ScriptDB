@@ -324,6 +324,8 @@ class SyncBaseDB(AbstractBaseDB):
 
     @require_init
     def update_one(self, table: str, pk: Any, row: Dict[str, Any]) -> int:
+        if not row:
+            return 0
         pk_col = self._primary_key(table)
         assignments = ", ".join([f"{c}=:{c}" for c in row])
         sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:pk"
