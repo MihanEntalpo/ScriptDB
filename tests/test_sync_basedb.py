@@ -159,6 +159,16 @@ def test_upsert_one_without_pk(db):
     assert row["x"] == 1
 
 
+def test_upsert_one_only_pk(db):
+    pk = db.upsert_one("t", {"id": 1})
+    assert pk == 1
+    pk = db.upsert_one("t", {"id": 1})
+    assert pk == 1
+    row = db.query_one("SELECT id, x FROM t WHERE id=?", (1,))
+    assert row["id"] == 1
+    assert row["x"] is None
+
+
 def test_upsert_many(db):
     db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "x": 2}])
     db.upsert_many("t", [{"id": 1, "x": 10}, {"id": 3, "x": 3}])
