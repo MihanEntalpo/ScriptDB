@@ -127,6 +127,12 @@ def test_insert_many(db):
     assert [r["x"] for r in rows] == [1, 2]
 
 
+def test_insert_many_empty(db):
+    db.insert_many("t", [])
+    count = db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
 def test_delete_one(db):
     pk = db.insert_one("t", {"x": 1})
     deleted = db.delete_one("t", pk)

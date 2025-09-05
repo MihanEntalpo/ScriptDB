@@ -132,6 +132,13 @@ async def test_insert_many(db):
 
 
 @pytest.mark.asyncio
+async def test_insert_many_empty(db):
+    await db.insert_many("t", [])
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_delete_one(db):
     pk = await db.insert_one("t", {"x": 1})
     deleted = await db.delete_one("t", pk)
