@@ -1,5 +1,12 @@
 # Changelog of the ScriptDB
 
+## 1.0.7 - Expanded tests and reliability fixes
+
+- Added tests for insert_many, query_dict edge cases, zero-expiry keys and PK-only upserts
+- Improved update/upsert handling for empty data and removed duplicate query hooks
+- Introduced DB builder module, unified DDL builder API and added identifier injection tests
+- Replaced deprecated loop parameter warnings and enabled migration rollback on interrupts
+
 ## 1.0.6 - Added simple SQL DDL queries builder
 
 - Added handy SQL DDL queries building tools
