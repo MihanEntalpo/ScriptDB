@@ -200,6 +200,14 @@ def test_update_one(db):
     assert row["x"] == 5
 
 
+def test_update_one_empty_dict(db):
+    pk = db.insert_one("t", {"x": 1})
+    updated = db.update_one("t", pk, {})
+    assert updated == 0
+    row = db.query_one("SELECT x FROM t WHERE id=?", (pk,))
+    assert row["x"] == 1
+
+
 def test_query_many_gen(db):
     db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []
