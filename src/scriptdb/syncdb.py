@@ -297,7 +297,6 @@ class SyncBaseDB(AbstractBaseDB):
                         self.conn.execute(update_sql, row)
             self.conn.commit()
             self._on_query()
-        self._on_query()
 
     @require_init
     def delete_one(self, table: str, pk: Any) -> int:
