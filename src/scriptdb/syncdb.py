@@ -271,6 +271,8 @@ class SyncBaseDB(AbstractBaseDB):
                 if update_sql:
                     self.conn.execute(update_sql, row)
                 else:
+                    self.conn.rollback()
+                    self._on_query()
                     return row[pk_col]
             self.conn.commit()
             self._on_query()
