@@ -271,6 +271,8 @@ class SyncBaseDB(AbstractBaseDB):
                 if update_sql:
                     self.conn.execute(update_sql, row)
                 else:
+                    self.conn.rollback()
+                    self._on_query()
                     return row[pk_col]
             self.conn.commit()
             self._on_query()
@@ -297,7 +299,6 @@ class SyncBaseDB(AbstractBaseDB):
                         self.conn.execute(update_sql, row)
             self.conn.commit()
             self._on_query()
-        self._on_query()
 
     @require_init
     def delete_one(self, table: str, pk: Any) -> int:
@@ -324,6 +325,8 @@ class SyncBaseDB(AbstractBaseDB):
 
     @require_init
     def update_one(self, table: str, pk: Any, row: Dict[str, Any]) -> int:
+        if not row:
+            return 0
         pk_col = self._primary_key(table)
         assignments = ", ".join([f"{c}=:{c}" for c in row])
         sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:pk"

@@ -1,12 +1,10 @@
 import asyncio
 import sqlite3
+import warnings
 from pathlib import Path
-from typing import Callable, Optional, Union, Any
+from typing import Any, Callable, Optional, Union
 
 from aiosqlite import Connection
-from logging import getLogger
-
-logger = getLogger(__name__)
 
 
 """
@@ -45,9 +43,10 @@ def connect(
     """Create and return a connection proxy to the sqlite database."""
 
     if loop is not None:
-        logger.warning(
+        warnings.warn(
             "aiosqlite.connect() no longer uses the `loop` parameter",
             DeprecationWarning,
+            stacklevel=2,
         )
 
     def connector() -> sqlite3.Connection:
