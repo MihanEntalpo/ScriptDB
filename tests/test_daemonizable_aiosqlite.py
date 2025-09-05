@@ -1,17 +1,16 @@
 import asyncio
+import pytest
 from scriptdb import daemonizable_aiosqlite as dai
 
 
-def test_connect_with_loop_triggers_warning(monkeypatch):
-    calls = []
-    monkeypatch.setattr(dai.logger, "warning", lambda *a, **k: calls.append((a, k)))
+def test_connect_with_loop_triggers_warning():
     loop = asyncio.new_event_loop()
     try:
-        conn = dai.connect(b":memory:", loop=loop)
-        loop.run_until_complete(conn.__aenter__())
-        assert isinstance(conn, dai.DaemonConnection)
-        assert calls
-        loop.run_until_complete(conn.close())
+        with pytest.warns(DeprecationWarning):
+            conn = dai.connect(b":memory:", loop=loop)
+            loop.run_until_complete(conn.__aenter__())
+            assert isinstance(conn, dai.DaemonConnection)
+            loop.run_until_complete(conn.close())
     finally:
         loop.close()
 
