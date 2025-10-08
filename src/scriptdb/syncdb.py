@@ -87,9 +87,9 @@ class SyncBaseDB(AbstractBaseDB):
 
             def runner(method=method, seconds=seconds):
                 while not self._stop_event.wait(seconds):
-                    logger.info("Launching method %s", method.__name__)
+                    logger.debug("Launching method %s", method.__name__)
                     method()
-                    logger.info(
+                    logger.debug(
                         "Method %s finished, next run in %s seconds",
                         method.__name__,
                         seconds,
@@ -195,7 +195,7 @@ class SyncBaseDB(AbstractBaseDB):
             hook["count"] += 1
             if hook["count"] >= hook["interval"]:
                 hook["count"] = 0
-                logger.info("Launching method %s", hook["method"].__name__)
+                logger.debug("Launching method %s", hook["method"].__name__)
                 hook["method"]()
 
     @require_init
