@@ -1,5 +1,9 @@
 # Changelog of the ScriptDB
 
+## 1.0.8 - Reduce routine logging noise
+
+- Lowered periodic task lifecycle logging in `AsyncBaseDB` and `SyncBaseDB` from INFO to DEBUG
+
 ## 1.0.7 - Expanded tests and reliability fixes
 
 - Added tests for insert_many, query_dict edge cases, zero-expiry keys and PK-only upserts
