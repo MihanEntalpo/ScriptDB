@@ -535,3 +535,32 @@ async def test_run_every_queries(tmp_path):
         assert db.calls == 1
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "factory, expected_type",
+    [(sqlite3.Row, sqlite3.Row), (dict, dict)],
+)
+async def test_row_factory_controls_async_results(tmp_path, factory, expected_type):
+    db_file = tmp_path / f"async_row_factory_{factory.__name__}.db"
+    async with MyTestDB.open(db_file, row_factory=factory, daemonize_thread=True) as db:
+        await db.insert_many("t", [{"x": 1}, {"x": 2}])
+
+        row = await db.query_one("SELECT * FROM t ORDER BY id LIMIT 1")
+        assert isinstance(row, expected_type)
+
+        rows = await db.query_many("SELECT * FROM t ORDER BY id")
+        assert all(isinstance(r, expected_type) for r in rows)
+
+        gen_rows = [row async for row in db.query_many_gen("SELECT * FROM t ORDER BY id")]
+        assert all(isinstance(r, expected_type) for r in gen_rows)
+
+        mapping = await db.query_dict("SELECT * FROM t ORDER BY id")
+        assert all(isinstance(value, expected_type) for value in mapping.values())
+
+        scalar = await db.query_scalar("SELECT x FROM t ORDER BY id LIMIT 1")
+        assert scalar == 1
+
+        column = await db.query_column("SELECT x FROM t ORDER BY id")
+        assert column == [1, 2]

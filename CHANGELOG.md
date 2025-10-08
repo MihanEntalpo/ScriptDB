@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.0.9 - Configurable row factories
+
+- Added `row_factory` option to async and sync base databases, cache wrappers, and context managers with support for `sqlite3.Row` or plain dict results
+- Documented row factory usage and added tests covering both row types across query helpers
+
 ## 1.0.8 - Added RAM key index, also reduce routine logging noise
 
 - Added RAM key index for sync and async cachedb, with cache_keys_in_ram=True it can speadup keys existing checks with some additional RAM usage

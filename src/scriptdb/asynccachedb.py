@@ -5,11 +5,12 @@ import pickle
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from ._cache_index import _CacheKeyIndexMixin
 from .abstractdb import run_every_seconds, require_init
-from .asyncdb import AsyncBaseDB, _AsyncDBOpenContext
+from ._rowfactory import supports_row_factory
+from .asyncdb import AsyncBaseDB, _AsyncDBOpenContext, RowFactorySetting
 
 
 class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
@@ -21,6 +22,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         auto_create: bool = True,
         *,
         use_wal: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> None:
@@ -28,6 +30,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             db_path,
             auto_create,
             use_wal=use_wal,
+            row_factory=row_factory,
             daemonize_thread=daemonize_thread,
             cache_keys_in_ram=cache_keys_in_ram,
         )
@@ -39,6 +42,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         *,
         auto_create: bool = True,
         use_wal: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> "_AsyncCacheDBOpenContext":
@@ -50,6 +54,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             str(path_obj),
             auto_create,
             use_wal,
+            row_factory,
             daemonize_thread,
             cache_keys_in_ram,
         )
@@ -196,20 +201,27 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
         db_path: str,
         auto_create: bool,
         use_wal: bool,
+        row_factory: RowFactorySetting,
         daemonize_thread: bool,
         cache_keys_in_ram: bool,
     ) -> None:
-        super().__init__(cls, db_path, auto_create, use_wal, daemonize_thread)
+        super().__init__(cls, db_path, auto_create, use_wal, daemonize_thread, row_factory)
         self._cache_keys_in_ram = cache_keys_in_ram
 
     async def _open(self) -> "AsyncCacheDB":
-        instance: AsyncCacheDB = self._cls(  # type: ignore[call-arg]
-            self._db_path,
-            auto_create=self._auto_create,
-            use_wal=self._use_wal,
-            daemonize_thread=self._daemonize_thread,
-            cache_keys_in_ram=self._cache_keys_in_ram,
-        )
+        kwargs: Dict[str, Any] = {
+            "auto_create": self._auto_create,
+            "use_wal": self._use_wal,
+            "daemonize_thread": self._daemonize_thread,
+            "cache_keys_in_ram": self._cache_keys_in_ram,
+        }
+        if supports_row_factory(self._cls):
+            kwargs["row_factory"] = self._row_factory
+            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+        else:
+            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+            if hasattr(instance, "_set_row_factory"):
+                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         await instance.init()
         instance._register_signal_handlers()
         self._db = instance

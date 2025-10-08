@@ -510,3 +510,31 @@ def test_run_every_queries(tmp_path):
         assert db.calls == 1
     finally:
         db.close()
+
+
+@pytest.mark.parametrize(
+    "factory, expected_type",
+    [(sqlite3.Row, sqlite3.Row), (dict, dict)],
+)
+def test_row_factory_controls_sync_results(tmp_path, factory, expected_type):
+    db_file = tmp_path / f"sync_row_factory_{factory.__name__}.db"
+    with MyTestDB.open(db_file, row_factory=factory) as db:
+        db.insert_many("t", [{"x": 1}, {"x": 2}])
+
+        row = db.query_one("SELECT * FROM t ORDER BY id LIMIT 1")
+        assert isinstance(row, expected_type)
+
+        rows = db.query_many("SELECT * FROM t ORDER BY id")
+        assert all(isinstance(r, expected_type) for r in rows)
+
+        gen_rows = list(db.query_many_gen("SELECT * FROM t ORDER BY id"))
+        assert all(isinstance(r, expected_type) for r in gen_rows)
+
+        mapping = db.query_dict("SELECT * FROM t ORDER BY id")
+        assert all(isinstance(value, expected_type) for value in mapping.values())
+
+        scalar = db.query_scalar("SELECT x FROM t ORDER BY id LIMIT 1")
+        assert scalar == 1
+
+        column = db.query_column("SELECT x FROM t ORDER BY id")
+        assert column == [1, 2]

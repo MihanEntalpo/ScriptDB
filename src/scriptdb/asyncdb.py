@@ -35,6 +35,14 @@ from typing import (
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
 from .dbbuilder import _SQLBuilder
+from ._rowfactory import (
+    RowFactorySetting,
+    RowType,
+    dict_row_factory,
+    first_column_value,
+    normalize_row_factory,
+    supports_row_factory,
+)
 
 
 def _capture_creation_site() -> str:
@@ -78,7 +86,13 @@ class _AsyncDBOpenContext(Generic[T]):
     """
 
     def __init__(
-        self, cls: Type[T], db_path: str, auto_create: bool, use_wal: bool, daemonize_thread: bool = False
+        self,
+        cls: Type[T],
+        db_path: str,
+        auto_create: bool,
+        use_wal: bool,
+        daemonize_thread: bool = False,
+        row_factory: RowFactorySetting = sqlite3.Row,
     ) -> None:
         self._cls = cls
         self._db_path = db_path
@@ -86,9 +100,15 @@ class _AsyncDBOpenContext(Generic[T]):
         self._use_wal = use_wal
         self._db: Optional[T] = None
         self._daemonize_thread = daemonize_thread
+        self._row_factory, _ = normalize_row_factory(row_factory)
 
     async def _open(self) -> T:
-        instance: T = self._cls(self._db_path)  # type: ignore
+        if supports_row_factory(self._cls):
+            instance = self._cls(self._db_path, row_factory=self._row_factory)  # type: ignore
+        else:
+            instance = self._cls(self._db_path)  # type: ignore
+            if hasattr(instance, "_set_row_factory"):
+                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
         instance.daemonize_thread = self._daemonize_thread
@@ -130,6 +150,7 @@ class AsyncBaseDB(AbstractBaseDB):
         auto_create: bool = True,
         *,
         use_wal: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
@@ -141,6 +162,24 @@ class AsyncBaseDB(AbstractBaseDB):
         self._close_lock = asyncio.Lock()
         self._signal_loop: Optional[asyncio.AbstractEventLoop] = None
         self._signals_registered = False
+        self._row_factory_setting: RowFactorySetting = sqlite3.Row
+        self._rows_as_dict = False
+        self._set_row_factory(row_factory)
+
+    def _set_row_factory(self, row_factory: RowFactorySetting) -> None:
+        normalized, rows_as_dict = normalize_row_factory(row_factory)
+        self._row_factory_setting = normalized
+        self._rows_as_dict = rows_as_dict
+        self._configure_row_factory()
+
+    def _configure_row_factory(self) -> None:
+        if self.conn is None:
+            return
+        conn = cast(Any, self.conn)
+        if self._rows_as_dict:
+            conn.row_factory = dict_row_factory
+        else:
+            conn.row_factory = sqlite3.Row
 
     def _register_signal_handlers(self) -> None:
         if self._signals_registered:
@@ -163,6 +202,7 @@ class AsyncBaseDB(AbstractBaseDB):
         auto_create: bool = True,
         use_wal: bool = True,
         daemonize_thread: bool = False,
+        row_factory: RowFactorySetting = sqlite3.Row,
     ) -> _AsyncDBOpenContext[T]:
         """
         Factory returning an awaitable context manager for the database instance.
@@ -183,7 +223,7 @@ class AsyncBaseDB(AbstractBaseDB):
         path_obj = Path(db_path)
         if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _AsyncDBOpenContext(cls, str(path_obj), auto_create, use_wal, daemonize_thread)
+        return _AsyncDBOpenContext(cls, str(path_obj), auto_create, use_wal, daemonize_thread, row_factory)
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
@@ -208,7 +248,7 @@ class AsyncBaseDB(AbstractBaseDB):
 
         if getattr(self, "use_wal", False):
             await self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.row_factory = sqlite3.Row
+        self._configure_row_factory()
         await self._ensure_migrations_table()
         await self._apply_migrations()
         self.initialized = True
@@ -558,9 +598,9 @@ class AsyncBaseDB(AbstractBaseDB):
     @require_init
     async def query_many(
         self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> List[sqlite3.Row]:
+    ) -> List[RowType]:
         """
-        Fetch all rows with parameters. Returns List[sqlite3.Row].
+        Fetch all rows with parameters. Returns ``List`` of the configured row type.
 
         Example:
             rows = await db.query_many(
@@ -575,14 +615,15 @@ class AsyncBaseDB(AbstractBaseDB):
         rows = list(await cur.fetchall())
         await cur.close()
         self._on_query()
-        return rows
+        return cast(List[RowType], rows)
 
     @require_init
     async def query_many_gen(
         self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> AsyncGenerator[sqlite3.Row, None]:
+    ) -> AsyncGenerator[RowType, None]:
         """
-        Async generator fetching rows one by one. Yields sqlite3.Row objects.
+        Async generator fetching rows one by one. Yields objects produced by the
+        configured row factory.
 
         Example:
             async for row in db.query_many_gen(
@@ -595,14 +636,14 @@ class AsyncBaseDB(AbstractBaseDB):
         async with self.conn.execute(sql, ps) as cur:
             self._on_query()
             async for row in cur:
-                yield row
+                yield cast(RowType, row)
 
     @require_init
     async def query_one(
         self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> Optional[sqlite3.Row]:
+    ) -> Optional[RowType]:
         """
-        Fetch single row with parameters. Returns sqlite3.Row or None.
+        Fetch single row with parameters. Returns row of configured type or ``None``.
 
         Example:
             row = await db.query_one(
@@ -617,7 +658,7 @@ class AsyncBaseDB(AbstractBaseDB):
         row = await cur.fetchone()
         await cur.close()
         self._on_query()
-        return row
+        return cast(Optional[RowType], row)
 
     @require_init
     async def query_scalar(
@@ -633,7 +674,7 @@ class AsyncBaseDB(AbstractBaseDB):
             )
         """
         row = await self.query_one(sql, params)
-        return None if row is None else row[0]
+        return None if row is None else first_column_value(row, self._rows_as_dict)
 
     @require_init
     async def query_column(
@@ -649,7 +690,7 @@ class AsyncBaseDB(AbstractBaseDB):
             )
         """
         rows = await self.query_many(sql, params)
-        return [row[0] for row in rows]
+        return [first_column_value(row, self._rows_as_dict) for row in rows]
 
     @require_init
     async def query_dict(
@@ -657,8 +698,8 @@ class AsyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
         *,
-        key: Union[str, Callable[[sqlite3.Row], Any], None] = None,
-        value: Union[str, Callable[[sqlite3.Row], Any], None] = None,
+        key: Union[str, Callable[[RowType], Any], None] = None,
+        value: Union[str, Callable[[RowType], Any], None] = None,
     ) -> Dict[Any, Any]:
         """Execute a query and return a dictionary built from rows.
 
@@ -704,25 +745,25 @@ class AsyncBaseDB(AbstractBaseDB):
         if isinstance(key, str):
             key_str = key
 
-            def get_key(row: sqlite3.Row) -> Any:
+            def get_key(row: RowType) -> Any:
                 return row[key_str]
         else:
 
-            def get_key(row: sqlite3.Row) -> Any:
+            def get_key(row: RowType) -> Any:
                 return key(row)
 
         if value is None:
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return row
         elif isinstance(value, str):
             value_str = value
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return row[value_str]
         else:
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return value(row)
 
         return {get_key(row): get_value(row) for row in rows}
