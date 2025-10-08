@@ -217,9 +217,9 @@ class AsyncBaseDB(AbstractBaseDB):
 
             async def runner(method=method, seconds=seconds):
                 while True:
-                    logger.info("Launching method %s", method.__name__)
+                    logger.debug("Launching method %s", method.__name__)
                     await method()
-                    logger.info(
+                    logger.debug(
                         "Method %s finished, next run in %s seconds",
                         method.__name__,
                         seconds,
@@ -340,9 +340,9 @@ class AsyncBaseDB(AbstractBaseDB):
                 hook["count"] = 0
 
                 async def runner(method=hook["method"], interval=hook["interval"]):
-                    logger.info("Launching method %s", method.__name__)
+                    logger.debug("Launching method %s", method.__name__)
                     await method()
-                    logger.info(
+                    logger.debug(
                         "Method %s finished, next run after %s queries",
                         method.__name__,
                         interval,
