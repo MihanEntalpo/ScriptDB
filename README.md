@@ -359,6 +359,34 @@ Subsequent calls within 30 seconds will return the cached result without
 executing the function. You can supply `key_func` to control how the cache key
 is generated.
 
+#### RAM key index
+
+Both cache implementations can track cache keys in memory for faster existence
+checks. Pass `cache_keys_in_ram=True` to the constructor or to `.open()` to
+enable this mode:
+
+```python
+async with AsyncCacheDB.open("cache.db", cache_keys_in_ram=True) as cache:
+    await cache.set("answer", b"42")
+    if await cache.is_set("answer"):
+        ...
+```
+
+```python
+with SyncCacheDB.open("cache.db", cache_keys_in_ram=True) as cache:
+    cache.set("answer", b"42")
+    if cache.get("missing", "?") == "?":
+        ...
+```
+
+When the RAM index is active, `is_set` no longer queries SQLite and `get`
+skips disk access for missing keys by consulting the in-memory map first.
+Because this map reflects only the current process, avoid multiprocessing and
+do not modify the same database from other processes or threads — doing so would
+desynchronize the cached keys. Storing every key in memory also increases RAM
+usage proportionally to the number of cached entries, so plan for that overhead
+before enabling the mode on very large caches.
+
 ## Simple DDL query builder
 
 If you often forget SQLite syntax, ScriptDB includes a small helper to build

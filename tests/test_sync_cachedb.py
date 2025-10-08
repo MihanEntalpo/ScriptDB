@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta, timezone
 import pytest
 import sys
 import pathlib
@@ -105,8 +106,113 @@ def test_cleanup_expired(db):
     assert count == 1
 
 
+def test_ram_index_initial_load_and_purge(tmp_path):
+    db_file = tmp_path / "ram_cache.db"
+    with SyncCacheDB.open(str(db_file)) as db:
+        db.set("keep", "v")
+        db.set("stale", "v", expire_sec=0)
+
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        assert "keep" in db._ram_keys
+        assert "stale" not in db._ram_keys
+
+        db.set("soon", "v", expire_sec=1)
+        assert "soon" in db._ram_keys
+        time.sleep(1.1)
+        db.set("later", "v")
+        assert "soon" not in db._ram_keys
+
+
+def test_ram_index_short_circuits_db_calls(tmp_path, monkeypatch):
+    db_file = tmp_path / "ram_cache.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+
+        def forbid_query(*args, **kwargs):
+            raise AssertionError("RAM index should avoid hitting the database")
+
+        monkeypatch.setattr(db, "query_one", forbid_query)
+        monkeypatch.setattr(db, "query_scalar", forbid_query)
+
+        assert db.get("missing") is None
+        assert db.is_set("missing") is False
+
+        db.set("present", "v")
+        assert db.is_set("present") is True
+        db.delete("present")
+        assert db.is_set("present") is False
+        assert db.get("present") is None
+
+
 def test_context_manager_closes(tmp_path):
     db_file = tmp_path / "ctx.db"
     with SyncCacheDB.open(str(db_file)) as db:
         db.set("a", 1)
     assert db.initialized is False
+
+
+def test_sync_cache_open_requires_existing_file(tmp_path):
+    missing = tmp_path / "nope.db"
+    with pytest.raises(RuntimeError):
+        SyncCacheDB.open(str(missing), auto_create=False)
+    with pytest.raises(RuntimeError):
+        SyncCacheDB(str(missing), auto_create=False)
+
+
+def test_ram_index_marks_missing_rows_on_get(tmp_path):
+    db_file = tmp_path / "ram_stale.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        db.set("ghost", "v")
+        db.execute("DELETE FROM cache WHERE key=?", ("ghost",))
+        assert "ghost" in db._ram_keys
+
+        assert db.get("ghost") is None
+        assert "ghost" not in db._ram_keys
+
+
+def test_ram_index_purges_expired_rows_on_get(tmp_path):
+    db_file = tmp_path / "ram_expire.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        db.set("ttl", "v", expire_sec=10)
+        past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        db.execute("UPDATE cache SET expire_utc=? WHERE key=?", (past, "ttl"))
+
+        assert db.get("ttl") is None
+        assert "ttl" not in db._ram_keys
+
+
+def test_ram_index_del_many_and_clear(tmp_path):
+    db_file = tmp_path / "ram_bulk.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        db.set("user:1", 1)
+        db.set("user:2", 2)
+        db.set("other", 3)
+
+        removed = db.del_many("user:*")
+        assert removed == 2
+        assert sorted(db._ram_keys) == ["other"]
+
+        db.clear()
+        assert db._ram_keys == {}
+        assert db._ram_entries == []
+        assert db._ram_scores == []
+
+
+def test_ram_has_key_evicts_expired_entry(tmp_path):
+    db_file = tmp_path / "ram_has_key.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        with db._ram_lock:
+            db._ram_insert_unlocked("expired", past)
+
+        assert db.is_set("expired") is False
+        assert "expired" not in db._ram_keys
+
+
+def test_ram_index_cleanup_purges_expired(tmp_path):
+    db_file = tmp_path / "ram_cleanup.db"
+    with SyncCacheDB.open(str(db_file), cache_keys_in_ram=True) as db:
+        db.set("linger", "v", expire_sec=1)
+        time.sleep(1.1)
+        db._cleanup()
+
+        assert "linger" not in db._ram_keys
