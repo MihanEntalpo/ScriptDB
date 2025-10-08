@@ -1,7 +1,8 @@
 # Changelog of the ScriptDB
 
-## 1.0.8 - Reduce routine logging noise
+## 1.0.8 - Added RAM key index, also reduce routine logging noise
 
+- Added RAM key index for sync and async cachedb, with cache_keys_in_ram=True it can speadup keys existing checks with some additional RAM usage
 - Lowered periodic task lifecycle logging in `AsyncBaseDB` and `SyncBaseDB` from INFO to DEBUG
 
 ## 1.0.7 - Expanded tests and reliability fixes
