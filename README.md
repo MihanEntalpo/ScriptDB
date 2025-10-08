@@ -308,6 +308,30 @@ status_by_url = await db.query_dict(
 )
 ```
 
+### Controlling the row factory
+
+`AsyncBaseDB` and `SyncBaseDB` return [`sqlite3.Row`](https://docs.python.org/3/library/sqlite3.html#row-objects)
+instances by default. Pass `row_factory=dict` to either the constructor or the
+`open()` helper to receive plain dictionaries instead.
+
+```python
+# Async example
+async with MyDB.open("app.db", row_factory=dict) as db:
+    row = await db.query_one("SELECT * FROM links LIMIT 1")
+    assert isinstance(row, dict)
+
+# Sync example (using your SyncBaseDB subclass)
+with MySyncDB.open("app.db", row_factory=dict) as db:
+    row = db.query_one("SELECT * FROM links LIMIT 1")
+    assert isinstance(row, dict)
+```
+
+The choice affects every method that previously returned `sqlite3.Row`
+instances (`query_one`, `query_many`, `query_many_gen`, and the default values
+from `query_dict`) as well as helpers like `query_scalar` and `query_column`.
+This makes it easy to integrate ScriptDB with codebases that prefer working
+with JSON-serialisable dictionaries instead of custom row objects.
+
 ## Useful implementations
 
 ### CacheDB

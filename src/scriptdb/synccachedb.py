@@ -6,11 +6,12 @@ import pickle
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from ._cache_index import _CacheKeyIndexMixin
+from ._rowfactory import supports_row_factory
 from .abstractdb import run_every_seconds, require_init
-from .syncdb import SyncBaseDB, _SyncDBOpenContext
+from .syncdb import SyncBaseDB, _SyncDBOpenContext, RowFactorySetting
 
 
 class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
@@ -22,11 +23,13 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
         auto_create: bool = True,
         *,
         use_wal: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
         cache_keys_in_ram: bool = False,
     ) -> None:
         super().__init__(
             db_path,
             auto_create,
+            row_factory=row_factory,
             use_wal=use_wal,
             cache_keys_in_ram=cache_keys_in_ram,
         )
@@ -37,6 +40,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
         db_path: Union[str, Path],
         *,
         auto_create: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
         use_wal: bool = True,
         cache_keys_in_ram: bool = False,
     ) -> "_SyncCacheDBOpenContext":
@@ -48,6 +52,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
             str(path_obj),
             auto_create,
             use_wal,
+            row_factory,
             cache_keys_in_ram,
         )
 
@@ -193,18 +198,25 @@ class _SyncCacheDBOpenContext(_SyncDBOpenContext["SyncCacheDB"]):
         db_path: str,
         auto_create: bool,
         use_wal: bool,
+        row_factory: RowFactorySetting,
         cache_keys_in_ram: bool,
     ) -> None:
-        super().__init__(cls, db_path, auto_create, use_wal)
+        super().__init__(cls, db_path, auto_create, use_wal, row_factory)
         self._cache_keys_in_ram = cache_keys_in_ram
 
     def _open(self) -> "SyncCacheDB":
-        instance: SyncCacheDB = self._cls(  # type: ignore[call-arg]
-            self._db_path,
-            auto_create=self._auto_create,
-            use_wal=self._use_wal,
-            cache_keys_in_ram=self._cache_keys_in_ram,
-        )
+        kwargs: Dict[str, Any] = {
+            "auto_create": self._auto_create,
+            "use_wal": self._use_wal,
+            "cache_keys_in_ram": self._cache_keys_in_ram,
+        }
+        if supports_row_factory(self._cls):
+            kwargs["row_factory"] = self._row_factory
+            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+        else:
+            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+            if hasattr(instance, "_set_row_factory"):
+                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         instance.init()
         self._db = instance
         return instance

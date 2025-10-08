@@ -24,6 +24,14 @@ from typing import (
 
 from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
 from .dbbuilder import _SQLBuilder
+from ._rowfactory import (
+    RowFactorySetting,
+    RowType,
+    dict_row_factory,
+    first_column_value,
+    normalize_row_factory,
+    supports_row_factory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +39,28 @@ T = TypeVar("T", bound="SyncBaseDB")
 
 
 class _SyncDBOpenContext(Generic[T]):
-    def __init__(self, cls: Type[T], db_path: str, auto_create: bool, use_wal: bool) -> None:
+    def __init__(
+        self,
+        cls: Type[T],
+        db_path: str,
+        auto_create: bool,
+        use_wal: bool,
+        row_factory: RowFactorySetting,
+    ) -> None:
         self._cls = cls
         self._db_path = db_path
         self._auto_create = auto_create
         self._use_wal = use_wal
         self._db: Optional[T] = None
+        self._row_factory, _ = normalize_row_factory(row_factory)
 
     def _open(self) -> T:
-        instance: T = self._cls(self._db_path)  # type: ignore
+        if supports_row_factory(self._cls):
+            instance = self._cls(self._db_path, row_factory=self._row_factory)  # type: ignore
+        else:
+            instance = self._cls(self._db_path)  # type: ignore
+            if hasattr(instance, "_set_row_factory"):
+                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
         instance.init()
@@ -56,7 +77,12 @@ class _SyncDBOpenContext(Generic[T]):
 
 class SyncBaseDB(AbstractBaseDB):
     def __init__(
-        self, db_path: Union[str, Path], auto_create: bool = True, *, use_wal: bool = True
+        self,
+        db_path: Union[str, Path],
+        auto_create: bool = True,
+        *,
+        row_factory: RowFactorySetting = sqlite3.Row,
+        use_wal: bool = True,
     ) -> None:
         super().__init__(db_path, auto_create, use_wal=use_wal)
         self.conn: sqlite3.Connection = cast(sqlite3.Connection, None)
@@ -64,21 +90,44 @@ class SyncBaseDB(AbstractBaseDB):
         self._stop_event = threading.Event()
         self._upsert_lock = threading.Lock()
         self._close_lock = threading.Lock()
+        self._row_factory_setting: RowFactorySetting = sqlite3.Row
+        self._rows_as_dict = False
+        self._set_row_factory(row_factory)
+
+    def _set_row_factory(self, row_factory: RowFactorySetting) -> None:
+        normalized, rows_as_dict = normalize_row_factory(row_factory)
+        self._row_factory_setting = normalized
+        self._rows_as_dict = rows_as_dict
+        self._configure_row_factory()
+
+    def _configure_row_factory(self) -> None:
+        if self.conn is None:
+            return
+        conn = cast(Any, self.conn)
+        if self._rows_as_dict:
+            conn.row_factory = dict_row_factory
+        else:
+            conn.row_factory = sqlite3.Row
 
     @classmethod
     def open(
-        cls: Type[T], db_path: Union[str, Path], *, auto_create: bool = True, use_wal: bool = True
+        cls: Type[T],
+        db_path: Union[str, Path],
+        *,
+        auto_create: bool = True,
+        row_factory: RowFactorySetting = sqlite3.Row,
+        use_wal: bool = True,
     ) -> _SyncDBOpenContext[T]:
         path_obj = Path(db_path)
         if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _SyncDBOpenContext(cls, str(path_obj), auto_create, use_wal)
+        return _SyncDBOpenContext(cls, str(path_obj), auto_create, use_wal, row_factory)
 
     def init(self) -> None:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         if getattr(self, "use_wal", False):
             self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.row_factory = sqlite3.Row
+        self._configure_row_factory()
         self._ensure_migrations_table()
         self._apply_migrations()
         self.initialized = True
@@ -342,41 +391,41 @@ class SyncBaseDB(AbstractBaseDB):
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> Optional[sqlite3.Row]:
+    ) -> Optional[RowType]:
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         row = cur.fetchone()
         cur.close()
         self._on_query()
-        return row
+        return cast(Optional[RowType], row)
 
     @require_init
     def query_many(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> List[sqlite3.Row]:
+    ) -> List[RowType]:
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         rows = cur.fetchall()
         cur.close()
         self._on_query()
-        return rows
+        return cast(List[RowType], rows)
 
     @require_init
     def query_many_gen(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> Generator[sqlite3.Row, None, None]:
+    ) -> Generator[RowType, None, None]:
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         try:
             for row in cur:
-                yield row
+                yield cast(RowType, row)
         finally:
             cur.close()
         self._on_query()
@@ -388,7 +437,7 @@ class SyncBaseDB(AbstractBaseDB):
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> Any:
         row = self.query_one(sql, params)
-        return None if row is None else row[0]
+        return None if row is None else first_column_value(row, self._rows_as_dict)
 
     @require_init
     def query_column(
@@ -397,7 +446,7 @@ class SyncBaseDB(AbstractBaseDB):
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> List[Any]:
         rows = self.query_many(sql, params)
-        return [row[0] for row in rows]
+        return [first_column_value(row, self._rows_as_dict) for row in rows]
 
     @require_init
     def query_dict(
@@ -405,8 +454,8 @@ class SyncBaseDB(AbstractBaseDB):
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
         *,
-        key: Union[str, Callable[[sqlite3.Row], Any], None] = None,
-        value: Union[str, Callable[[sqlite3.Row], Any], None] = None,
+        key: Union[str, Callable[[RowType], Any], None] = None,
+        value: Union[str, Callable[[RowType], Any], None] = None,
     ) -> Dict[Any, Any]:
         rows = self.query_many(sql, params)
         if key is None:
@@ -425,25 +474,25 @@ class SyncBaseDB(AbstractBaseDB):
         if isinstance(key, str):
             key_str = key
 
-            def get_key(row: sqlite3.Row) -> Any:
+            def get_key(row: RowType) -> Any:
                 return row[key_str]
         else:
 
-            def get_key(row: sqlite3.Row) -> Any:
+            def get_key(row: RowType) -> Any:
                 return key(row)
 
         if value is None:
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return row
         elif isinstance(value, str):
             value_str = value
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return row[value_str]
         else:
 
-            def get_value(row: sqlite3.Row) -> Any:
+            def get_value(row: RowType) -> Any:
                 return value(row)
 
         return {get_key(row): get_value(row) for row in rows}
