@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.0.10 - Dictionary-driven table builder
+
+- Added `Builder.create_table_from_dict` helper to infer column types, primary keys, and allow further builder chaining from representative dictionaries
+- Documented dictionary-based schema generation and covered the new helper with validation and chaining tests
+
 ## 1.0.9 - Configurable row factories
 
 - Added `row_factory` option to async and sync base databases, cache wrappers, and context managers with support for `sqlite3.Row` or plain dict results

@@ -7,6 +7,83 @@ from datetime import date, datetime
 
 INJECTION = 'x"; DROP TABLE safe;--'
 
+
+def test_create_table_from_dict_with_int_id():
+    sql = (
+        Builder.create_table_from_dict(
+            "users",
+            {
+                "id": 1,
+                "name": "Alice",
+                "is_active": True,
+                "score": 3.5,
+                "payload": b"\x00",
+            },
+        )
+        .done()
+    )
+    assert (
+        sql
+        == 'CREATE TABLE IF NOT EXISTS "users" ('
+        '"id" INTEGER PRIMARY KEY AUTOINCREMENT, '
+        '"name" TEXT, '
+        '"is_active" INTEGER, '
+        '"score" REAL, '
+        '"payload" BLOB);'
+    )
+
+
+def test_create_table_from_dict_with_text_id():
+    sql = (
+        Builder.create_table_from_dict(
+            "users",
+            {
+                "id": "user-1",
+                "created": date(2024, 1, 2),
+                "last_login": datetime(2024, 1, 3, 4, 5, 6),
+            },
+        )
+        .done()
+    )
+    assert (
+        sql
+        == 'CREATE TABLE IF NOT EXISTS "users" ('
+        '"id" TEXT PRIMARY KEY NOT NULL, '
+        '"created" TEXT, '
+        '"last_login" TEXT);'
+    )
+
+
+def test_create_table_from_dict_is_chainable():
+    sql = (
+        Builder.create_table_from_dict(
+            "users",
+            {
+                "username": "alice",
+            },
+        )
+        .add_field("age", int, not_null=True)
+        .done()
+    )
+    assert (
+        sql
+        == 'CREATE TABLE IF NOT EXISTS "users" ('
+        '"username" TEXT, '
+        '"age" INTEGER NOT NULL);'
+    )
+
+
+def test_create_table_from_dict_validates_input():
+    with pytest.raises(ValueError):
+        Builder.create_table_from_dict("users", {})
+    with pytest.raises(ValueError):
+        Builder.create_table_from_dict("users", {"id": 1, "meta": {"role": "admin"}})
+    with pytest.raises(ValueError):
+        Builder.create_table_from_dict("users", {"name": ["alice", "bob"]})
+    with pytest.raises(ValueError):
+        Builder.create_table_from_dict("users", {"id": 1.5})
+
+
 def test_create_table_builder_generates_sql():
     sql = str(
         Builder.create_table("users")
