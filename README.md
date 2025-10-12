@@ -424,6 +424,7 @@ Unlike raw SQL, there is no syntax to memorize. Just type Builder. and let your 
 
 ```python
 from scriptdb import Builder
+from datetime import datetime
 
 # The following examples build SQL strings; they do not execute them.
 # Builder objects can be rendered either by calling `.done()` or by
@@ -457,6 +458,18 @@ index_sql = str(
 
 # Build query to drop the table when finished
 drop_sql = str(Builder.drop_table("users"))
+
+# Infer column definitions from a representative dictionary
+sample_row = {
+    "id": 1,  # becomes INTEGER PRIMARY KEY AUTOINCREMENT
+    "username": "alice",  # TEXT
+    "is_active": True,  # INTEGER
+}
+inferred_sql = (
+    Builder.create_table_from_dict("users", sample_row)
+    .add_field("created_at", datetime)  # chaining works like with create_table
+    .done()
+)
 ```
 
 These builders are convenient for defining migrations in `*BaseDB` subclasses:

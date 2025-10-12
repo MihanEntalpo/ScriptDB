@@ -58,6 +58,27 @@ def _default_literal(value: Any) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
+def _infer_python_type(value: Any) -> _PyType:
+    """Infer a supported Python type from a runtime value."""
+    if value is None:
+        raise ValueError("Cannot infer column type from None")
+    if isinstance(value, bool):
+        return bool
+    if isinstance(value, int):
+        return int
+    if isinstance(value, float):
+        return float
+    if isinstance(value, str):
+        return str
+    if isinstance(value, bytes):
+        return bytes
+    if isinstance(value, datetime):
+        return datetime
+    if isinstance(value, date):
+        return date
+    raise ValueError(f"Unsupported value type for SQLite column inference: {type(value)!r}")
+
+
 @dataclass
 class _Column:
     name: str
@@ -527,6 +548,61 @@ class Builder:
         ``Builder.create_table("users").done()``
         """
         return CreateTableBuilder(name, if_not_exists=if_not_exists, without_rowid=without_rowid)
+
+    @staticmethod
+    def create_table_from_dict(
+        name: str,
+        src: dict[str, Any],
+        *,
+        if_not_exists: bool = True,
+        without_rowid: bool = False,
+    ) -> CreateTableBuilder:
+        """Create a table builder by inferring column types from a mapping.
+
+        Parameters
+        ----------
+        name:
+            Table name.
+        src:
+            Dictionary describing columns and representative values. Only flat
+            dictionaries are supported; nested structures such as dictionaries
+            or lists are rejected.
+
+        Returns
+        -------
+        CreateTableBuilder
+            Builder instance equivalent to :py:meth:`create_table` with columns
+            pre-populated from ``src``.
+        """
+
+        if not src:
+            raise ValueError("create_table_from_dict requires at least one column")
+
+        builder = Builder.create_table(
+            name,
+            if_not_exists=if_not_exists,
+            without_rowid=without_rowid,
+        )
+
+        if "id" in src:
+            id_type = _infer_python_type(src["id"])
+            if id_type not in (int, str):
+                raise ValueError(
+                    "Field 'id' must be inferred as int or str for primary key generation",
+                )
+            builder.primary_key("id", id_type)
+
+        for key, value in src.items():
+            if key == "id":
+                continue
+            if not isinstance(key, str):
+                raise TypeError("Column names inferred from dictionaries must be strings")
+            if isinstance(value, (dict, list, tuple, set)):
+                raise ValueError("create_table_from_dict only supports flat dictionaries")
+            column_type = _infer_python_type(value)
+            builder.add_field(key, column_type)
+
+        return builder
 
     @staticmethod
     def alter_table(name: str) -> AlterTableBuilder:
