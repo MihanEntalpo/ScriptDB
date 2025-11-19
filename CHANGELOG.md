@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.0.12 - Builder method aliases follow-up
+
+- Re-release the builder alias changes under 1.0.12 to avoid clashing with the
+  upstream 1.0.11 version already present on `main`
+
 ## 1.0.11 - Migration callable fixes
 
 - Ensured async initialization resets the `initialized` flag on errors so migration functions can safely run database helpers

@@ -229,6 +229,48 @@ class CreateTableBuilder(_SQLBuilder):
         self._st.columns.append(_Column(name=name, decl=decl))
         return self
 
+    def add_column(
+        self,
+        name: str,
+        py_type: _PyType,
+        *,
+        not_null: bool = False,
+        unique: bool = False,
+        default: Any = None,
+        check: Optional[str] = None,
+        references: Optional[Tuple[str, Optional[str]]] = None,
+    ) -> "CreateTableBuilder":
+        """Alias for :py:meth:`add_field` for API symmetry."""
+
+        return self.add_field(
+            name,
+            py_type,
+            not_null=not_null,
+            unique=unique,
+            default=default,
+            check=check,
+            references=references,
+        )
+
+    def remove_column(self, name: str) -> "CreateTableBuilder":
+        """Remove a previously added column by name."""
+
+        before = len(self._st.columns)
+        self._st.columns = [c for c in self._st.columns if c.name != name]
+        if len(self._st.columns) == before:
+            raise ValueError(f"Column {name!r} not found in CREATE TABLE builder")
+        return self
+
+    def remove_field(self, name: str) -> "CreateTableBuilder":
+        """Alias for :py:meth:`remove_column`."""
+
+        return self.remove_column(name)
+
+    def remove_filter(self, name: str) -> "CreateTableBuilder":
+        """Alias for :py:meth:`remove_column` (legacy naming)."""
+
+        return self.remove_column(name)
+
     def unique(self, *cols: str) -> "CreateTableBuilder":
         """Add a table-level ``UNIQUE`` constraint.
 
@@ -356,6 +398,29 @@ class AlterTableBuilder(_SQLBuilder):
         )
         return self
 
+    def add_field(
+        self,
+        name: str,
+        py_type: _PyType,
+        *,
+        not_null: bool = False,
+        unique: bool = False,
+        default: Any = None,
+        check: Optional[str] = None,
+        references: Optional[Tuple[str, Optional[str]]] = None,
+    ) -> "AlterTableBuilder":
+        """Alias for :py:meth:`add_column` for API symmetry."""
+
+        return self.add_column(
+            name,
+            py_type,
+            not_null=not_null,
+            unique=unique,
+            default=default,
+            check=check,
+            references=references,
+        )
+
     def drop_column(self, name: str) -> "AlterTableBuilder":
         """Queue a ``DROP COLUMN`` action.
 
@@ -374,6 +439,21 @@ class AlterTableBuilder(_SQLBuilder):
             )
         )
         return self
+
+    def remove_column(self, name: str) -> "AlterTableBuilder":
+        """Alias for :py:meth:`drop_column` for API symmetry."""
+
+        return self.drop_column(name)
+
+    def remove_field(self, name: str) -> "AlterTableBuilder":
+        """Alias for :py:meth:`drop_column`."""
+
+        return self.drop_column(name)
+
+    def remove_filter(self, name: str) -> "AlterTableBuilder":
+        """Alias for :py:meth:`drop_column` (legacy naming)."""
+
+        return self.drop_column(name)
 
     def rename_to(self, new_table_name: str) -> "AlterTableBuilder":
         """Queue a ``RENAME TO`` action to rename the table.

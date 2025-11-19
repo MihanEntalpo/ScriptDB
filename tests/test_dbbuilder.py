@@ -102,6 +102,18 @@ def test_create_table_builder_generates_sql():
     assert sql == expected_sql
 
 
+def test_create_table_builder_aliases_and_removals():
+    sql = (
+        Builder.create_table("users")
+        .add_column("id", int)
+        .add_field("name", str)
+        .remove_filter("id")
+        .done()
+    )
+
+    assert sql == 'CREATE TABLE IF NOT EXISTS "users" ("name" TEXT);'
+
+
 def test_alter_table_builder_generates_sql():
     sql = str(
         Builder.alter_table("users")
@@ -114,6 +126,23 @@ def test_alter_table_builder_generates_sql():
         '\nALTER TABLE "users" RENAME COLUMN "age" TO "user_age";'
         '\nALTER TABLE "users" RENAME TO "people";'
     )
+    assert sql == expected_sql
+
+
+def test_alter_table_builder_aliases():
+    sql = str(
+        Builder.alter_table("users")
+        .add_field("age", int, default=0)
+        .remove_column("age")
+        .remove_field("age")
+    )
+
+    expected_sql = (
+        'ALTER TABLE "users" ADD COLUMN "age" INTEGER DEFAULT 0;'
+        '\nALTER TABLE "users" DROP COLUMN "age";'
+        '\nALTER TABLE "users" DROP COLUMN "age";'
+    )
+
     assert sql == expected_sql
 
 
