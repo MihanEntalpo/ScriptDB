@@ -5,10 +5,12 @@
 - Re-release the builder alias changes under 1.0.12 to avoid clashing with the
   upstream 1.0.11 version already present on `main`
 
-## 1.0.11 - Builder method aliases
+## 1.0.11 - Migration callable fixes
 
-- Added symmetrical aliases for column add/remove helpers across ``create_table`` and ``alter_table`` builders (``add_column``/``add_field``, ``remove_column``/``remove_field``/``remove_filter``)
-- Allowed removing previously added columns from ``CreateTableBuilder`` before rendering SQL
+- Ensured async initialization resets the `initialized` flag on errors so migration functions can safely run database helpers
+  during setup
+- Added sync and async migration callable signature validation and regression tests so missing or extra parameters raise
+  descriptive errors rather than raw `TypeError`s
 
 ## 1.0.10 - Dictionary-driven table builder
 

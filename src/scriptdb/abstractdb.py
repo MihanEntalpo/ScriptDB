@@ -71,6 +71,24 @@ def run_every_queries(queries: int) -> Callable:
     return decorator
 
 
+def _is_signature_binding_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` originates from ``inspect.Signature.bind`` helpers."""
+
+    tb = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        module = frame.f_globals.get("__name__")
+        if module == "inspect" and frame.f_code.co_name in {
+            "_bind",
+            "bind",
+            "_bind_partial",
+            "bind_partial",
+        }:
+            return True
+        tb = tb.tb_next
+    return False
+
+
 class AbstractBaseDB(abc.ABC):
     def __init__(
         self, db_path: Union[str, Path], auto_create: bool = True, *, use_wal: bool = True
