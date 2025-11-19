@@ -1,5 +1,15 @@
 # Changelog of the ScriptDB
 
+## 1.0.12 - Builder method aliases follow-up
+
+- Re-release the builder alias changes under 1.0.12 to avoid clashing with the
+  upstream 1.0.11 version already present on `main`
+
+## 1.0.11 - Builder method aliases
+
+- Added symmetrical aliases for column add/remove helpers across ``create_table`` and ``alter_table`` builders (``add_column``/``add_field``, ``remove_column``/``remove_field``/``remove_filter``)
+- Allowed removing previously added columns from ``CreateTableBuilder`` before rendering SQL
+
 ## 1.0.10 - Dictionary-driven table builder
 
 - Added `Builder.create_table_from_dict` helper to infer column types, primary keys, and allow further builder chaining from representative dictionaries
