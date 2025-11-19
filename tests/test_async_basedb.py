@@ -238,6 +238,13 @@ async def test_update_one_empty_dict(db):
 
 
 @pytest.mark.asyncio
+async def test_update_one_missing_table(db):
+    with pytest.raises(ValueError) as exc:
+        await db.update_one("missing", 1, {"x": 2})
+    assert "does not exist" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_query_many_gen(db):
     await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []
@@ -381,7 +388,7 @@ async def test_missing_migration_name(tmp_path):
 
 class NonCallableFuncDB(AsyncBaseDB):
     def migrations(self):
-        return [{"name": "bad", "function": "not_callable"}]
+        return [{"name": "bad", "function": 123}]
 
 
 @pytest.mark.asyncio
@@ -428,6 +435,98 @@ async def test_async_function_called_with_args(tmp_path):
         assert AsyncFuncDB.recorded["name"] == "good"
     finally:
         await db.close()
+
+
+class AsyncBadFunctionSignatureDB(AsyncBaseDB):
+    def migrations(self):
+        async def func(db, migrations):
+            return None
+
+        return [{"name": "bad", "function": func}]
+
+
+@pytest.mark.asyncio
+async def test_async_function_requires_three_args(tmp_path):
+    with pytest.raises(TypeError, match=r"parameters \(db, migrations, name\)"):
+        await AsyncBadFunctionSignatureDB.open(str(tmp_path / "sig.sqlite"), daemonize_thread=True)
+
+
+class AsyncBoundMethodFuncDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY, data TEXT)"},
+            {"name": "seed", "function": self._seed_data},
+        ]
+
+    async def _seed_data(self, migrations, name):
+        await self.insert_many("t", [{"id": "a", "data": "alpha"}])
+
+
+@pytest.mark.asyncio
+async def test_async_function_accepts_bound_method(tmp_path):
+    db = await AsyncBoundMethodFuncDB.open(
+        str(tmp_path / "bound.sqlite"), daemonize_thread=True
+    )
+    try:
+        values = await db.query_column("SELECT data FROM t")
+        assert values == ["alpha"]
+    finally:
+        await db.close()
+
+
+class AsyncBadBoundFunctionSignatureDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY)"},
+            {"name": "bad", "function": self._bad_seed},
+        ]
+
+    async def _bad_seed(self, migrations):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_async_bound_function_requires_two_args(tmp_path):
+    with pytest.raises(TypeError, match=r"parameters \(migrations, name\)"):
+        await AsyncBadBoundFunctionSignatureDB.open(
+            str(tmp_path / "bound_sig.sqlite"), daemonize_thread=True
+        )
+
+
+class AsyncFunctionNameDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY, data TEXT)"},
+            {"name": "seed", "function": "_seed_from_name"},
+        ]
+
+    async def _seed_from_name(self, migrations, name):
+        await self.insert_many("t", [{"id": "b", "data": "beta"}])
+
+
+@pytest.mark.asyncio
+async def test_async_function_resolves_name(tmp_path):
+    db = await AsyncFunctionNameDB.open(
+        str(tmp_path / "named.sqlite"), daemonize_thread=True
+    )
+    try:
+        values = await db.query_column("SELECT data FROM t")
+        assert values == ["beta"]
+    finally:
+        await db.close()
+
+
+class AsyncMissingFunctionNameDB(AsyncBaseDB):
+    def migrations(self):
+        return [{"name": "missing", "function": "does_not_exist"}]
+
+
+@pytest.mark.asyncio
+async def test_async_function_name_missing_attribute(tmp_path):
+    with pytest.raises(ValueError):
+        await AsyncMissingFunctionNameDB.open(
+            str(tmp_path / "missing_fn.sqlite"), daemonize_thread=True
+        )
 
 
 class MissingSqlFuncDB(AsyncBaseDB):

@@ -31,9 +31,15 @@ from typing import (
     AsyncGenerator,
     Generic,
     cast,
+    Tuple,
 )
 
-from .abstractdb import AbstractBaseDB, require_init, _get_migrations_table_sql
+from .abstractdb import (
+    AbstractBaseDB,
+    require_init,
+    _get_migrations_table_sql,
+    _is_signature_binding_error,
+)
 from .dbbuilder import _SQLBuilder
 from ._rowfactory import (
     RowFactorySetting,
@@ -249,9 +255,13 @@ class AsyncBaseDB(AbstractBaseDB):
         if getattr(self, "use_wal", False):
             await self.conn.execute("PRAGMA journal_mode=WAL")
         self._configure_row_factory()
-        await self._ensure_migrations_table()
-        await self._apply_migrations()
         self.initialized = True
+        try:
+            await self._ensure_migrations_table()
+            await self._apply_migrations()
+        except BaseException:
+            self.initialized = False
+            raise
 
         for seconds, method in self._periodic_specs:
 
@@ -343,10 +353,35 @@ class AsyncBaseDB(AbstractBaseDB):
                     raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             else:
                 func = mig["function"]
-                if not callable(func) or not inspect.iscoroutinefunction(func):
+                if isinstance(func, str):
+                    try:
+                        func = getattr(self, func)
+                    except AttributeError as exc:
+                        raise ValueError(
+                            f"'function' for migration {name} references unknown attribute '{func}'"
+                        ) from exc
+                target = getattr(func, "__func__", func)
+                if not callable(func) or not inspect.iscoroutinefunction(target):
                     raise TypeError(f"'function' for migration {name} must be an async function")
+                bound = inspect.ismethod(func)
+                call_args: Tuple[Any, ...]
+                signature_hint: str
+                if bound:
+                    call_args = (migrations_list, name)
+                    signature_hint = "(migrations, name)"
+                else:
+                    call_args = (self, migrations_list, name)
+                    signature_hint = "(db, migrations, name)"
                 try:
-                    await func(self, migrations_list, name)
+                    inspect.signature(func).bind(*call_args)
+                except TypeError as exc:
+                    if not _is_signature_binding_error(exc):
+                        raise
+                    raise TypeError(
+                        f"'function' for migration {name} must accept parameters {signature_hint}"
+                    ) from exc
+                try:
+                    await func(*call_args)
                 except Exception as exc:
                     raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
 
@@ -364,6 +399,8 @@ class AsyncBaseDB(AbstractBaseDB):
             cur = await self.conn.execute(sql)
             rows = await cur.fetchall()
             await cur.close()
+            if not rows:
+                raise ValueError(f"Table {table} does not exist")
             pk_cols = [row["name"] for row in rows if row["pk"]]
             if not pk_cols:
                 raise ValueError(f"Table {table} has no primary key")

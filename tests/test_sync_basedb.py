@@ -224,6 +224,12 @@ def test_update_one_empty_dict(db):
     assert row["x"] == 1
 
 
+def test_update_one_missing_table(db):
+    with pytest.raises(ValueError) as exc:
+        db.update_one("missing", 1, {"x": 2})
+    assert "does not exist" in str(exc.value)
+
+
 def test_query_many_gen(db):
     db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
     results = []
@@ -361,7 +367,7 @@ def test_missing_migration_name(tmp_path):
 
 class NonCallableFuncDB(SyncBaseDB):
     def migrations(self):
-        return [{"name": "bad", "function": "not_callable"}]
+        return [{"name": "bad", "function": 123}]
 
 
 def test_non_callable_function(tmp_path):
@@ -406,6 +412,87 @@ def test_function_called_with_args(tmp_path):
         assert FuncDB.recorded["name"] == "good"
     finally:
         db.close()
+
+
+class SyncBadFunctionSignatureDB(SyncBaseDB):
+    def migrations(self):
+        def func(db, migrations):
+            return None
+
+        return [{"name": "bad", "function": func}]
+
+
+def test_sync_function_requires_three_args(tmp_path):
+    with pytest.raises(TypeError, match=r"parameters \(db, migrations, name\)"):
+        SyncBadFunctionSignatureDB.open(str(tmp_path / "sig.sqlite"))._open()
+
+
+class SyncBoundMethodFuncDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY, data TEXT)"},
+            {"name": "seed", "function": self._seed_data},
+        ]
+
+    def _seed_data(self, migrations, name):
+        self.insert_many("t", [{"id": "a", "data": "alpha"}])
+
+
+def test_sync_function_accepts_bound_method(tmp_path):
+    ctx = SyncBoundMethodFuncDB.open(str(tmp_path / "bound.sqlite"))
+    db = ctx._open()
+    try:
+        cur = db.conn.execute("SELECT data FROM t")
+        assert [row[0] for row in cur.fetchall()] == ["alpha"]
+    finally:
+        db.close()
+
+
+class SyncBadBoundFunctionSignatureDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY)"},
+            {"name": "bad", "function": self._bad_seed},
+        ]
+
+    def _bad_seed(self, migrations):
+        return None
+
+
+def test_sync_bound_function_requires_two_args(tmp_path):
+    with pytest.raises(TypeError, match=r"parameters \(migrations, name\)"):
+        SyncBadBoundFunctionSignatureDB.open(str(tmp_path / "bound_sig.sqlite"))._open()
+
+
+class SyncFunctionNameDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "create", "sql": "CREATE TABLE t(id TEXT PRIMARY KEY, data TEXT)"},
+            {"name": "seed", "function": "_seed_from_name"},
+        ]
+
+    def _seed_from_name(self, migrations, name):
+        self.insert_many("t", [{"id": "b", "data": "beta"}])
+
+
+def test_sync_function_resolves_name(tmp_path):
+    ctx = SyncFunctionNameDB.open(str(tmp_path / "named.sqlite"))
+    db = ctx._open()
+    try:
+        cur = db.conn.execute("SELECT data FROM t")
+        assert [row[0] for row in cur.fetchall()] == ["beta"]
+    finally:
+        db.close()
+
+
+class SyncMissingFunctionNameDB(SyncBaseDB):
+    def migrations(self):
+        return [{"name": "missing", "function": "does_not_exist"}]
+
+
+def test_sync_function_name_missing_attribute(tmp_path):
+    with pytest.raises(ValueError):
+        SyncMissingFunctionNameDB.open(str(tmp_path / "missing_fn.sqlite"))._open()
 
 
 class MissingSqlFuncDB(SyncBaseDB):
