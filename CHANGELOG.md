@@ -1,5 +1,12 @@
 # Changelog of the ScriptDB
 
+## 1.0.11 - Migration callable fixes
+
+- Ensured async initialization resets the `initialized` flag on errors so migration functions can safely run database helpers
+  during setup
+- Added sync and async migration callable signature validation and regression tests so missing or extra parameters raise
+  descriptive errors rather than raw `TypeError`s
+
 ## 1.0.10 - Dictionary-driven table builder
 
 - Added `Builder.create_table_from_dict` helper to infer column types, primary keys, and allow further builder chaining from representative dictionaries
