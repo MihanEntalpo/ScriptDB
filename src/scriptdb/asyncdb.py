@@ -170,6 +170,7 @@ class AsyncBaseDB(AbstractBaseDB):
         self._signals_registered = False
         self._row_factory_setting: RowFactorySetting = sqlite3.Row
         self._rows_as_dict = False
+        self._in_transaction = False
         self._set_row_factory(row_factory)
 
     def _set_row_factory(self, row_factory: RowFactorySetting) -> None:
@@ -199,6 +200,48 @@ class AsyncBaseDB(AbstractBaseDB):
             loop.add_signal_handler(sig, _handler)
         self._signal_loop = loop
         self._signals_registered = True
+
+    async def _maybe_commit(self) -> None:
+        if not self._in_transaction:
+            await self.conn.commit()
+
+    @require_init
+    async def begin(self) -> None:
+        if self._in_transaction:
+            raise RuntimeError("A transaction is already in progress")
+        await self.conn.execute("BEGIN")
+        self._in_transaction = True
+
+    @require_init
+    async def commit(self) -> None:
+        if not self._in_transaction:
+            raise RuntimeError("No active transaction to commit")
+        await self.conn.commit()
+        self._in_transaction = False
+
+    @require_init
+    async def rollback(self) -> None:
+        if not self._in_transaction:
+            raise RuntimeError("No active transaction to roll back")
+        await self.conn.rollback()
+        self._in_transaction = False
+
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        if not self.initialized or self.conn is None:
+            raise RuntimeError("you didn't call init")
+        await self.begin()
+        committed = False
+        try:
+            yield
+            committed = True
+        except BaseException:
+            if self._in_transaction:
+                await self.rollback()
+            raise
+        finally:
+            if committed and self._in_transaction:
+                await self.commit()
 
     @classmethod
     def open(
@@ -289,7 +332,7 @@ class AsyncBaseDB(AbstractBaseDB):
         sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         await self.conn.execute(sql)
-        await self.conn.commit()
+        await self._maybe_commit()
 
     async def _applied_versions(self) -> Set[str]:
         sql = "SELECT name FROM applied_migrations"
@@ -388,7 +431,7 @@ class AsyncBaseDB(AbstractBaseDB):
             sql = "INSERT INTO applied_migrations(name) VALUES (?)"
             logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
             await self.conn.execute(sql, (name,))
-            await self.conn.commit()
+            await self._maybe_commit()
 
     @require_init
     async def _primary_key(self, table: str) -> str:
@@ -449,7 +492,7 @@ class AsyncBaseDB(AbstractBaseDB):
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = await self.conn.execute(sql, ps)
-        await self.conn.commit()
+        await self._maybe_commit()
         self._on_query()
         return cur
 
@@ -468,7 +511,7 @@ class AsyncBaseDB(AbstractBaseDB):
         """
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = await self.conn.executemany(sql, seq_params)
-        await self.conn.commit()
+        await self._maybe_commit()
         self._on_query()
         return cur
 
@@ -487,7 +530,7 @@ class AsyncBaseDB(AbstractBaseDB):
         sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
         logger.debug("Executing SQL: %s; params: %s", sql, row)
         cur = await self.conn.execute(sql, row)
-        await self.conn.commit()
+        await self._maybe_commit()
         self._on_query()
         pk = row.get(pk_col, cur.lastrowid)
         await cur.close()
@@ -508,7 +551,7 @@ class AsyncBaseDB(AbstractBaseDB):
         placeholders = ", ".join([f":{c}" for c in cols])
         sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
         await self.conn.executemany(sql, rows)
-        await self.conn.commit()
+        await self._maybe_commit()
         self._on_query()
 
     @require_init
@@ -578,8 +621,8 @@ class AsyncBaseDB(AbstractBaseDB):
                     if update_sql:
                         logger.debug("Executing SQL: %s; params: %s", update_sql, row)
                         await self.conn.execute(update_sql, row)
-            await self.conn.commit()
-            self._on_query()
+        await self._maybe_commit()
+        self._on_query()
 
     @require_init
     async def update_one(self, table: str, pk: Any, data: Dict[str, Any]) -> int:
@@ -832,6 +875,7 @@ class AsyncBaseDB(AbstractBaseDB):
                     await task
             self._query_tasks.clear()
             if self.conn:
+                self._in_transaction = False
                 await self.conn.close()
                 self.conn = cast(aiosqlite.Connection, None)
             self.initialized = False

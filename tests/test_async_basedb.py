@@ -157,6 +157,62 @@ async def test_delete_many(db):
 
 
 @pytest.mark.asyncio
+async def test_transaction_context_manager_commits(db):
+    async with db.transaction():
+        await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+        await db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+    values = await db.query_column("SELECT x FROM t ORDER BY x")
+    assert values == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_transaction_context_manager_rolls_back_on_error(db):
+    with pytest.raises(RuntimeError):
+        async with db.transaction():
+            await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+            raise RuntimeError("boom")
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_transaction_context_manager_rejects_nesting(db):
+    async def _attempt_nested():
+        async with db.transaction():
+            await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+            async with db.transaction():
+                await db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+
+    with pytest.raises(RuntimeError):
+        await _attempt_nested()
+
+    count = await db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_methods(db):
+    await db.begin()
+    await db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+    await db.commit()
+
+    await db.begin()
+    await db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+    await db.rollback()
+
+    values = await db.query_column("SELECT x FROM t ORDER BY x")
+    assert values == [1]
+
+
+@pytest.mark.asyncio
+async def test_manual_transactions_reject_nested_begin(db):
+    await db.begin()
+    with pytest.raises(RuntimeError):
+        await db.begin()
+    await db.rollback()
+
+
+@pytest.mark.asyncio
 async def test_upsert_one(db):
     pk = await db.upsert_one("t", {"id": 1, "x": 1})
     assert pk == 1

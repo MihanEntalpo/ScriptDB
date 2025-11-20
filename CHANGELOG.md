@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.0.13 - Transaction helpers
+
+- Added `begin`, `commit`, `rollback`, and `transaction()` helpers to both async and sync base classes with docs and tests.
+- Disabled auto-commit while a user transaction is active so statement helpers participate in the surrounding transaction.
+
 ## 1.0.12 - Builder method aliases follow-up
 
 - Re-release the builder alias changes under 1.0.12 to avoid clashing with the
