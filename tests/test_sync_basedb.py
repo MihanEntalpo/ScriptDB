@@ -149,6 +149,57 @@ def test_delete_many(db):
     assert [r["x"] for r in rows] == [1]
 
 
+def test_transaction_context_manager_commits(db):
+    with db.transaction():
+        db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+        db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+    values = db.query_column("SELECT x FROM t ORDER BY x")
+    assert values == [1, 2]
+
+
+def test_transaction_context_manager_rolls_back_on_error(db):
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+            raise RuntimeError("boom")
+    count = db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
+def test_transaction_context_manager_rejects_nesting(db):
+    def _attempt_nested():
+        with db.transaction():
+            db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+            with db.transaction():
+                db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+
+    with pytest.raises(RuntimeError):
+        _attempt_nested()
+
+    count = db.query_scalar("SELECT COUNT(*) FROM t")
+    assert count == 0
+
+
+def test_manual_transaction_methods(db):
+    db.begin()
+    db.execute("INSERT INTO t(x) VALUES(?)", (1,))
+    db.commit()
+
+    db.begin()
+    db.execute("INSERT INTO t(x) VALUES(?)", (2,))
+    db.rollback()
+
+    values = db.query_column("SELECT x FROM t ORDER BY x")
+    assert values == [1]
+
+
+def test_manual_transactions_reject_nested_begin(db):
+    db.begin()
+    with pytest.raises(RuntimeError):
+        db.begin()
+    db.rollback()
+
+
 def test_upsert_one(db):
     pk = db.upsert_one("t", {"id": 1, "x": 1})
     assert pk == 1

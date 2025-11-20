@@ -1,3 +1,4 @@
+import contextlib
 import sqlite3
 import logging
 import threading
@@ -98,6 +99,7 @@ class SyncBaseDB(AbstractBaseDB):
         self._close_lock = threading.Lock()
         self._row_factory_setting: RowFactorySetting = sqlite3.Row
         self._rows_as_dict = False
+        self._in_transaction = False
         self._set_row_factory(row_factory)
 
     def _set_row_factory(self, row_factory: RowFactorySetting) -> None:
@@ -114,6 +116,48 @@ class SyncBaseDB(AbstractBaseDB):
             conn.row_factory = dict_row_factory
         else:
             conn.row_factory = sqlite3.Row
+
+    def _maybe_commit(self) -> None:
+        if not self._in_transaction:
+            self.conn.commit()
+
+    @require_init
+    def begin(self) -> None:
+        if self._in_transaction:
+            raise RuntimeError("A transaction is already in progress")
+        self.conn.execute("BEGIN")
+        self._in_transaction = True
+
+    @require_init
+    def commit(self) -> None:
+        if not self._in_transaction:
+            raise RuntimeError("No active transaction to commit")
+        self.conn.commit()
+        self._in_transaction = False
+
+    @require_init
+    def rollback(self) -> None:
+        if not self._in_transaction:
+            raise RuntimeError("No active transaction to roll back")
+        self.conn.rollback()
+        self._in_transaction = False
+
+    @contextlib.contextmanager
+    def transaction(self):
+        if not self.initialized or self.conn is None:
+            raise RuntimeError("you didn't call init")
+        self.begin()
+        committed = False
+        try:
+            yield
+            committed = True
+        except BaseException:
+            if self._in_transaction:
+                self.rollback()
+            raise
+        finally:
+            if committed and self._in_transaction:
+                self.commit()
 
     @classmethod
     def open(
@@ -162,7 +206,7 @@ class SyncBaseDB(AbstractBaseDB):
         sql = _get_migrations_table_sql()
         logger.debug("Executing SQL: %s", sql)
         self.conn.execute(sql)
-        self.conn.commit()
+        self._maybe_commit()
 
     def _applied_versions(self) -> Set[str]:
         sql = "SELECT name FROM applied_migrations"
@@ -256,7 +300,7 @@ class SyncBaseDB(AbstractBaseDB):
             sql = "INSERT INTO applied_migrations(name) VALUES (?)"
             logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
             self.conn.execute(sql, (name,))
-            self.conn.commit()
+            self._maybe_commit()
 
     @require_init
     def _primary_key(self, table: str) -> str:
@@ -293,7 +337,7 @@ class SyncBaseDB(AbstractBaseDB):
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         return cur
 
@@ -305,7 +349,7 @@ class SyncBaseDB(AbstractBaseDB):
     ) -> sqlite3.Cursor:
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
         cur = self.conn.executemany(sql, seq_params)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         return cur
 
@@ -317,7 +361,7 @@ class SyncBaseDB(AbstractBaseDB):
         sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
         logger.debug("Executing SQL: %s; params: %s", sql, row)
         cur = self.conn.execute(sql, row)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         pk = row.get(pk_col, cur.lastrowid)
         cur.close()
@@ -332,7 +376,7 @@ class SyncBaseDB(AbstractBaseDB):
         placeholders = ", ".join([f":{c}" for c in cols])
         sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
         self.conn.executemany(sql, rows)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
 
     @require_init
@@ -357,10 +401,11 @@ class SyncBaseDB(AbstractBaseDB):
                 if update_sql:
                     self.conn.execute(update_sql, row)
                 else:
-                    self.conn.rollback()
+                    if not self._in_transaction:
+                        self.conn.rollback()
                     self._on_query()
                     return row[pk_col]
-            self.conn.commit()
+            self._maybe_commit()
             self._on_query()
             return row.get(pk_col, self.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
@@ -383,7 +428,7 @@ class SyncBaseDB(AbstractBaseDB):
                 except sqlite3.IntegrityError:
                     if update_sql:
                         self.conn.execute(update_sql, row)
-            self.conn.commit()
+            self._maybe_commit()
             self._on_query()
 
     @require_init
@@ -391,7 +436,7 @@ class SyncBaseDB(AbstractBaseDB):
         pk_col = self._primary_key(table)
         sql = f"DELETE FROM {table} WHERE {pk_col}=?"
         cur = self.conn.execute(sql, (pk,))
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         return cur.rowcount
 
@@ -405,7 +450,7 @@ class SyncBaseDB(AbstractBaseDB):
         ps = params if params is not None else ()
         sql = f"DELETE FROM {table} WHERE {where}"
         cur = self.conn.execute(sql, ps)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         return cur.rowcount
 
@@ -419,7 +464,7 @@ class SyncBaseDB(AbstractBaseDB):
         row = dict(row)
         row["pk"] = pk
         cur = self.conn.execute(sql, row)
-        self.conn.commit()
+        self._maybe_commit()
         self._on_query()
         return cur.rowcount
 
@@ -548,6 +593,7 @@ class SyncBaseDB(AbstractBaseDB):
                 t.join(timeout=0)
             self._periodic_threads.clear()
             if self.conn:
+                self._in_transaction = False
                 self.conn.close()
                 self.conn = cast(sqlite3.Connection, None)
             self.initialized = False

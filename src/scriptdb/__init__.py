@@ -21,7 +21,7 @@ __all__ = [
     "AsyncCacheDB",  # lazy-imported via __getattr__
     "SyncCacheDB",  # lazy-imported via __getattr__
 ]
-__version__ = "1.0.5"
+__version__ = "1.0.13"
 
 
 # Lazy-load objects that require optional dependencies so that importing

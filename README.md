@@ -280,6 +280,29 @@ await db.delete_one("links", pk)
 await db.delete_many("links", "status = ?", (404,))
 ```
 
+### Transactions
+
+Group multiple statements into a single unit of work with the built-in transaction
+context managers. They automatically call `BEGIN`, `COMMIT`, and `ROLLBACK` for
+you:
+
+```python
+# Async example
+async with db.transaction():
+    await db.execute("INSERT INTO links(url) VALUES(?)", ("https://example",))
+    await db.execute("UPDATE links SET status=? WHERE url=?", (200, "https://example"))
+
+# Sync example
+with db.transaction():
+    db.execute("INSERT INTO links(url) VALUES(?)", ("https://example",))
+    db.execute("UPDATE links SET status=? WHERE url=?", (200, "https://example"))
+```
+
+If you need full control, you can also call `begin()`, `commit()`, and
+`rollback()` directly on `AsyncBaseDB` and `SyncBaseDB` instances. Nested
+transactions are not supported—calling `begin()` or `transaction()` while a
+transaction is already active raises a `RuntimeError`.
+
 ### Query helpers
 
 The library also offers helpers for common read patterns:
