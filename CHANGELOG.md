@@ -1,5 +1,9 @@
 # Changelog of the ScriptDB
 
+## 1.0.14 - Sync/async conversion helpers
+
+- Added factories to generate async database classes from sync ones (and vice versa) while reusing migrations, enforcing SQL-only steps for safe conversion.
+
 ## 1.0.13 - Transaction helpers
 
 - Added `begin`, `commit`, `rollback`, and `transaction()` helpers to both async and sync base classes with docs and tests.
