@@ -50,6 +50,36 @@ asynchronous usage or `SyncBaseDB`/`SyncCacheDB` from `scriptdb.syncdb` for
 synchronous usage. For convenience, each module also exposes `BaseDB` and
 `CacheDB` aliases pointing to the respective implementations.
 
+If you need both versions of the same schema, `scriptdb.conversion` can build a
+class that reuses an existing set of migrations without duplicating any code.
+Migrations must already match the target style: synchronous migrations for
+`SyncBaseDB` subclasses and asynchronous migrations for `AsyncBaseDB`
+subclasses. Conversion only works for SQL-based migrations (strings or
+`Builder` objects); callable `function` migrations cannot be converted because
+their async/sync behavior is implementation-specific.
+
+```python
+from scriptdb.conversion import async_from_sync, sync_from_async
+from scriptdb.syncdb import SyncBaseDB
+
+
+class SyncEventsDB(SyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "create_events",
+                "sql": "CREATE TABLE events(id INTEGER PRIMARY KEY, payload TEXT)",
+            },
+        ]
+
+
+# Generate an async counterpart that shares migrations
+AsyncEventsDB = async_from_sync(SyncEventsDB)
+
+# Or build a sync wrapper around an async definition
+SyncEventsFromAsync = sync_from_async(AsyncEventsDB)
+```
+
 ## Asynchronous quick start
 
 Create a subclass of `AsyncBaseDB` and provide a list of migrations:
