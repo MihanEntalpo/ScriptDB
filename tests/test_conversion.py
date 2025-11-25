@@ -101,3 +101,33 @@ async def test_conversion_rejects_function_migrations(tmp_path):
     with pytest.raises(TypeError, match="callables: migration callable_step"):
         async with AsyncFromSync.open(str(tmp_path / "async_func.db")):
             pass
+
+
+@pytest.mark.asyncio
+async def test_async_from_sync_closes_on_migration_error(tmp_path):
+    class SyncWithFunction(SyncBaseDB):
+        def migrations(self):
+            return [
+                {"name": "callable_step", "function": self._apply_custom},
+            ]
+
+        def _apply_custom(self, migrations, name):  # pragma: no cover - not executed
+            return migrations, name
+
+    AsyncFromSync = async_from_sync(SyncWithFunction)
+    closed = False
+
+    orig_close = AsyncFromSync.close
+
+    async def tracking_close(self):
+        nonlocal closed
+        closed = True
+        await orig_close(self)
+
+    AsyncFromSync.close = tracking_close  # type: ignore[assignment]
+
+    with pytest.raises(TypeError, match="callables: migration callable_step"):
+        async with AsyncFromSync.open(str(tmp_path / "async_func.db")):
+            pass
+
+    assert closed

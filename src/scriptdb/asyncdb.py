@@ -118,7 +118,12 @@ class _AsyncDBOpenContext(Generic[T]):
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
         instance.daemonize_thread = self._daemonize_thread
-        await instance.init()
+        try:
+            await instance.init()
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await instance.close()
+            raise
         instance._register_signal_handlers()
         self._db = instance
         return instance
@@ -882,7 +887,12 @@ class AsyncBaseDB(AbstractBaseDB):
 
     async def __aenter__(self: T) -> T:
         if not self.initialized:
-            await self.init()
+            try:
+                await self.init()
+            except BaseException:
+                with contextlib.suppress(BaseException):
+                    await self.close()
+                raise
         self._register_signal_handlers()
         return self
 
