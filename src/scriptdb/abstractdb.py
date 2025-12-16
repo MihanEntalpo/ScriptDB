@@ -32,7 +32,8 @@ def require_init(method: Callable) -> Callable:
 
         async def async_wrapper(self, *args, **kwargs):
             if not getattr(self, "initialized", False) or getattr(self, "conn", None) is None:
-                raise RuntimeError("you didn't call init")
+                error_builder = getattr(self, "_not_initialized_error", None)
+                raise error_builder() if callable(error_builder) else RuntimeError("you didn't call init")
             return await method(self, *args, **kwargs)
 
         return async_wrapper
@@ -40,7 +41,8 @@ def require_init(method: Callable) -> Callable:
 
         async def async_gen_wrapper(self, *args, **kwargs):
             if not getattr(self, "initialized", False) or getattr(self, "conn", None) is None:
-                raise RuntimeError("you didn't call init")
+                error_builder = getattr(self, "_not_initialized_error", None)
+                raise error_builder() if callable(error_builder) else RuntimeError("you didn't call init")
             async for item in method(self, *args, **kwargs):
                 yield item
 
@@ -49,7 +51,8 @@ def require_init(method: Callable) -> Callable:
 
         def sync_wrapper(self, *args, **kwargs):
             if not getattr(self, "initialized", False) or getattr(self, "conn", None) is None:
-                raise RuntimeError("you didn't call init")
+                error_builder = getattr(self, "_not_initialized_error", None)
+                raise error_builder() if callable(error_builder) else RuntimeError("you didn't call init")
             return method(self, *args, **kwargs)
 
         return sync_wrapper
@@ -101,6 +104,7 @@ class AbstractBaseDB(abc.ABC):
         self.use_wal = use_wal
         self.conn: Union[sqlite3.Connection, aiosqlite.Connection, None] = None
         self.initialized: bool = False
+        self._is_closed: bool = False
         self._periodic_specs: List[Tuple[int, Callable]] = []
         self._query_hooks: List[Dict[str, Any]] = []
         self._pk_cache: Dict[str, str] = {}
@@ -140,3 +144,8 @@ class AbstractBaseDB(abc.ABC):
             if mig["name"] not in applied:
                 validated.append(mig)
         return validated
+
+    def _not_initialized_error(self) -> RuntimeError:
+        if getattr(self, "_is_closed", False):
+            return RuntimeError("connection already closed")
+        return RuntimeError("you didn't call init")

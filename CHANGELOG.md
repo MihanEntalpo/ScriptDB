@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.0.15 - Closed connection status flag
+
+- Added an `_is_closed` flag to base database classes, marking closure and resetting on initialization to improve lifecycle tracking.
+- Updated initialization guards to report that the connection is already closed when methods are invoked after shutdown.
+
 ## 1.0.14 - Sync/async conversion helpers
 
 - Added factories to generate async database classes from sync ones (and vice versa) while reusing migrations, enforcing SQL-only steps for safe conversion.
@@ -81,4 +86,3 @@
 
 * Full sync and async BaseDB with migrations support
 * CacheDB implemented via sync and async interfaces
-
