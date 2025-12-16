@@ -145,7 +145,7 @@ class SyncBaseDB(AbstractBaseDB):
     @contextlib.contextmanager
     def transaction(self):
         if not self.initialized or self.conn is None:
-            raise RuntimeError("you didn't call init")
+            raise self._not_initialized_error()
         self.begin()
         committed = False
         try:
@@ -178,6 +178,7 @@ class SyncBaseDB(AbstractBaseDB):
         if getattr(self, "use_wal", False):
             self.conn.execute("PRAGMA journal_mode=WAL")
         self._configure_row_factory()
+        self._is_closed = False
         self.initialized = True
         try:
             self._ensure_migrations_table()
@@ -587,6 +588,7 @@ class SyncBaseDB(AbstractBaseDB):
         """
         with self._close_lock:
             if not self.initialized and self.conn is None:
+                self._is_closed = True
                 return
             self._stop_event.set()
             for t in self._periodic_threads:
@@ -597,6 +599,7 @@ class SyncBaseDB(AbstractBaseDB):
                 self.conn.close()
                 self.conn = cast(sqlite3.Connection, None)
             self.initialized = False
+            self._is_closed = True
 
     def __enter__(self: T) -> T:
         if not self.initialized:

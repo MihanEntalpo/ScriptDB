@@ -234,7 +234,7 @@ class AsyncBaseDB(AbstractBaseDB):
     @contextlib.asynccontextmanager
     async def transaction(self):
         if not self.initialized or self.conn is None:
-            raise RuntimeError("you didn't call init")
+            raise self._not_initialized_error()
         await self.begin()
         committed = False
         try:
@@ -303,6 +303,7 @@ class AsyncBaseDB(AbstractBaseDB):
         if getattr(self, "use_wal", False):
             await self.conn.execute("PRAGMA journal_mode=WAL")
         self._configure_row_factory()
+        self._is_closed = False
         self.initialized = True
         try:
             await self._ensure_migrations_table()
@@ -862,6 +863,7 @@ class AsyncBaseDB(AbstractBaseDB):
         """
         async with self._close_lock:
             if not self.initialized and self.conn is None:
+                self._is_closed = True
                 return
             if self._signals_registered and self._signal_loop is not None:
                 for sig in (signal.SIGINT, signal.SIGTERM):
@@ -884,6 +886,7 @@ class AsyncBaseDB(AbstractBaseDB):
                 await self.conn.close()
                 self.conn = cast(aiosqlite.Connection, None)
             self.initialized = False
+            self._is_closed = True
 
     async def __aenter__(self: T) -> T:
         if not self.initialized:
