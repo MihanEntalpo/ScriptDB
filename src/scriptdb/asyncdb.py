@@ -39,6 +39,8 @@ from .abstractdb import (
     require_init,
     _get_migrations_table_sql,
     _is_signature_binding_error,
+    _script_has_transaction,
+    _script_starts_unfinished_transaction,
 )
 from .dbbuilder import _SQLBuilder
 from ._rowfactory import (
@@ -383,22 +385,20 @@ class AsyncBaseDB(AbstractBaseDB):
                         raise TypeError(
                             f"'sqls' for migration {name} must contain only strings or SQL builder instances"
                         )
+                    if _script_starts_unfinished_transaction(sql):
+                        raise ValueError(
+                            f"'sqls' for migration {name} contains a BEGIN without COMMIT/ROLLBACK"
+                        )
                     rendered.append(sql)
+                body = "\n".join(sql if sql.rstrip().endswith(";") else f"{sql};" for sql in rendered)
+                user_wrapped = any(_script_has_transaction(sql) for sql in rendered)
+                script = body if user_wrapped else f"BEGIN;\n{body}\nCOMMIT;"
                 try:
-                    await self.conn.execute("BEGIN")
-                    try:
-                        for sql in rendered:
-                            logger.debug(
-                                "Applying migration by executing SQL script: %s",
-                                sql,
-                            )
-                            await self.conn.execute(sql)
-                    except BaseException:
-                        await self.conn.rollback()
-                        raise
-                    else:
-                        await self.conn.commit()
+                    logger.debug("Applying migration by executing SQL script: %s", script)
+                    await self.conn.executescript(script)
                 except Exception as exc:
+                    if not user_wrapped:
+                        await self.conn.execute("ROLLBACK")
                     raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
             else:
                 func = mig["function"]

@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 import pytest_asyncio
 from typing import Dict, Any
-from scriptdb import AsyncBaseDB, run_every_seconds, run_every_queries
+from scriptdb import AsyncBaseDB, Builder, run_every_seconds, run_every_queries
 
 
 class MyTestDB(AsyncBaseDB):
@@ -107,6 +107,169 @@ async def test_sqls_migration_rollback(tmp_path):
         assert row is None
     finally:
         conn.close()
+
+
+class _MultiSQLsDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "multi_sqls_single_entry",
+                "sqls": [
+                    (
+                        "CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT);"
+                        "INSERT INTO t(id, val) VALUES (1, 'a');"
+                        "INSERT INTO t(id, val) VALUES (2, 'b');"
+                    )
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_accepts_multiple_statements(tmp_path):
+    db_file = tmp_path / "multisql.db"
+    async with _MultiSQLsDB.open(db_file, daemonize_thread=True) as db:
+        rows = await db.query_many("SELECT id, val FROM t ORDER BY id")
+    assert [(row["id"], row["val"]) for row in rows] == [(1, "a"), (2, "b")]
+
+
+class _AlterBuilderMultiActionDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {"name": "base_table", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"},
+            {
+                "name": "add_columns_in_one_sqls_entry",
+                "sqls": [
+                    Builder.alter_table("t").add_column("x", int).add_column("y", str)
+                ],
+            },
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sql_builder_with_multiple_alter_actions(tmp_path):
+    db_file = tmp_path / "builder_multi.db"
+    async with _AlterBuilderMultiActionDB.open(db_file, daemonize_thread=True) as db:
+        cols = await db.query_column("SELECT name FROM pragma_table_info('t')")
+    assert {"id", "x", "y"} <= set(cols)
+
+
+class _UserWrappedTransactionDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "wrapped_sqls",
+                "sqls": [
+                    """
+                    BEGIN;
+                    CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT);
+                    INSERT INTO t(val) VALUES ('a');
+                    COMMIT;
+                    """,
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_respects_user_transactions(tmp_path):
+    db_file = tmp_path / "userwrapped.db"
+    async with _UserWrappedTransactionDB.open(db_file, daemonize_thread=True) as db:
+        rows = await db.query_many("SELECT id, val FROM t")
+    assert rows[0]["val"] == "a"
+
+
+class _MissingCommitDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "missing_commit",
+                "sqls": [
+                    """
+                    BEGIN;
+                    CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT);
+                    INSERT INTO t(val) VALUES ('a')
+                    """,
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_requires_closing_transaction(tmp_path):
+    db_file = tmp_path / "missing_commit.db"
+    with pytest.raises(ValueError):
+        async with _MissingCommitDB.open(db_file, daemonize_thread=True):
+            pass
+
+
+class _NoSemicolonDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "no_semicolons",
+                "sqls": [
+                    "CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)",
+                    "INSERT INTO t(val) VALUES ('a')",
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_without_semicolons_still_executes(tmp_path):
+    db_file = tmp_path / "nosemi.db"
+    async with _NoSemicolonDB.open(db_file, daemonize_thread=True) as db:
+        rows = await db.query_many("SELECT id, val FROM t")
+    assert rows[0]["val"] == "a"
+
+
+class _LiteralBeginDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "literal_begin",
+                "sqls": [
+                    "CREATE TABLE t(id INTEGER PRIMARY KEY, note TEXT DEFAULT 'begin')",
+                    "INSERT INTO t(note) VALUES ('ok')",
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_ignores_literal_begin(tmp_path):
+    db_file = tmp_path / "literalbegin.db"
+    async with _LiteralBeginDB.open(db_file, daemonize_thread=True) as db:
+        note = await db.query_scalar("SELECT note FROM t")
+    assert note == "ok"
+
+
+class _BeginInCommentsDB(AsyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "begin_in_comments",
+                "sqls": [
+                    """
+                    /* hello, its BEGIN, but it's in comment */
+                    -- and this is also BEGIN
+                    /* who knows, is this */ /* BEGIN */ /* or not? */
+                    CREATE TABLE t(id INTEGER PRIMARY KEY);
+                    """,
+                ],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sqls_ignores_begin_in_comments(tmp_path):
+    db_file = tmp_path / "commentbegin.db"
+    async with _BeginInCommentsDB.open(db_file, daemonize_thread=True) as db:
+        exists = await db.query_scalar(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='t'"
+        )
+    assert exists == "t"
 
 
 @pytest.mark.asyncio
