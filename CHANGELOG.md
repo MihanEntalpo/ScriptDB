@@ -1,5 +1,12 @@
 # Changelog of the ScriptDB
 
+## 1.1.0 - Multi-statement migrations
+
+- Allow executing multiple statements inside a single `sqls` entry, including builder-generated scripts, by executing
+  each entry via SQLite `executescript` within the migration transaction.
+- Added regression tests for multi-statement migrations in sync and async databases and documented usage patterns.
+- Bumped version to 1.1.0.
+
 ## 1.0.15 - Closed connection status flag
 
 - Added an `_is_closed` flag to base database classes, marking closure and resetting on initialization to improve lifecycle tracking.

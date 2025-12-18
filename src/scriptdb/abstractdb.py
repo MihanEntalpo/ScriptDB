@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import inspect
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple, TypeVar, Union, Set, TYPE_CHECKING
 
@@ -25,6 +26,32 @@ MIGRATIONS_TABLE_SQL = """
 
 def _get_migrations_table_sql() -> str:
     return MIGRATIONS_TABLE_SQL
+
+
+_FIRST_KEYWORD_PATTERN = re.compile(r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*(\w+)", re.DOTALL)
+
+
+def _first_keyword(sql: str) -> str:
+    match = _FIRST_KEYWORD_PATTERN.search(sql)
+    return match.group(1).lower() if match else ""
+
+
+def _script_has_transaction(sql: str) -> bool:
+    """Return True if ``sql`` starts with a transaction directive."""
+
+    return _first_keyword(sql) in {"begin", "commit", "rollback", "end"}
+
+
+def _script_starts_unfinished_transaction(sql: str) -> bool:
+    """Return True if ``sql`` begins a transaction without a closing statement."""
+
+    if _first_keyword(sql) != "begin":
+        return False
+    for stmt in sql.split(";"):
+        kw = _first_keyword(stmt)
+        if kw in {"commit", "rollback", "end"}:
+            return False
+    return True
 
 
 def require_init(method: Callable) -> Callable:
