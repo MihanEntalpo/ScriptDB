@@ -9,6 +9,7 @@ import threading
 # Add the src directory to sys.path so we can import the package
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from scriptdb import Builder, SyncBaseDB, run_every_seconds, run_every_queries
+import scriptdb.sqlite_backend as sqlite_backend
 
 
 class MyTestDB(SyncBaseDB):
@@ -385,6 +386,13 @@ def test_upsert_many(db):
     db.upsert_many("t", [{"id": 1, "x": 10}, {"id": 3, "x": 3}])
     rows = db.query_many("SELECT id, x FROM t ORDER BY id")
     assert [(r["id"], r["x"]) for r in rows] == [(1, 10), (2, 2), (3, 3)]
+
+
+def test_upsert_reports_old_sqlite(monkeypatch, db):
+    monkeypatch.setattr(sqlite_backend, "SQLITE_TOO_OLD", True)
+    monkeypatch.setattr(sqlite_backend, "UPSERT_UNSUPPORTED_MESSAGE", "too old", raising=False)
+    with pytest.raises(RuntimeError, match="too old"):
+        db.upsert_one("t", {"id": 1, "x": 1})
 
 
 def test_upsert_waits_for_lock(db):

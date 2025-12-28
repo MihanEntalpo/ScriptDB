@@ -1,5 +1,14 @@
 # Changelog of the ScriptDB
 
+## 1.1.1 - SQLite backend selection and native upserts
+
+- Added a SQLite backend resolver that prefers ``pysqlite3`` when available, registers the chosen backend globally, and
+  warns when the detected SQLite version is older than 3.24.0.
+- Switched `upsert_one`/`upsert_many` to use native `INSERT ... ON CONFLICT DO UPDATE` and raise clear errors when
+  running against too-old SQLite builds.
+- Documented the SQLite >= 3.24.0 requirement and introduced the optional `scriptdb[pysqlite]` extra for bundling a
+  modern SQLite build on legacy systems.
+
 ## 1.1.0 - Multi-statement migrations
 
 - Allow executing multiple statements inside a single `sqls` entry, including builder-generated scripts, by executing

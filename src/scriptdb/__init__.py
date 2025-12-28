@@ -1,15 +1,14 @@
 """Async SQLite database with migrations for lightweight scripts."""
 
-import sqlite3
-
-MIN_SQLITE_VERSION = (3, 21, 0)
-
-if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:  # pragma: no cover - env guard
-    raise RuntimeError("ScriptDB requires SQLite >= 3.21.0")
-
+from . import sqlite_backend  # noqa: E402
 from .abstractdb import AbstractBaseDB, run_every_seconds, run_every_queries  # noqa: E402
 from .dbbuilder import Builder  # noqa: E402
 from .syncdb import SyncBaseDB  # noqa: E402
+
+sqlite3 = sqlite_backend.sqlite3
+sqlite_backend_name = sqlite_backend.SQLITE_BACKEND
+sqlite_version = sqlite_backend.SQLITE_VERSION
+sqlite_too_old = sqlite_backend.SQLITE_TOO_OLD
 
 __all__ = [
     "AbstractBaseDB",
@@ -20,6 +19,8 @@ __all__ = [
     "run_every_queries",
     "AsyncCacheDB",  # lazy-imported via __getattr__
     "SyncCacheDB",  # lazy-imported via __getattr__
+    "sqlite_backend_name",
+    "sqlite_version",
 ]
 __version__ = "1.1.0"
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scriptdb"
-version = "1.1.0"
+version = "1.1.1"
 description = "Simple SQLite sync/async wrapper with migration support for use in ad-hoc scripts"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -38,6 +38,9 @@ where = ["src"]
 async = [
     "aiosqlite>=0.19"
 ]
+pysqlite = [
+    "pysqlite3-binary>=0.5.0"
+]
 test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.20",
@@ -49,7 +52,7 @@ test = [
 
 
 [tool.scriptdb]
-minimum_sqlite_version = "3.21.0"
+minimum_sqlite_version = "3.24.0"
 
 [tool.ruff]
 line-length = 120

@@ -1,5 +1,4 @@
 import abc
-import sqlite3
 import asyncio
 import signal
 import logging
@@ -9,6 +8,7 @@ import re
 import traceback
 
 from . import daemonizable_aiosqlite
+from . import sqlite_backend
 
 try:
     import aiosqlite
@@ -51,6 +51,8 @@ from ._rowfactory import (
     normalize_row_factory,
     supports_row_factory,
 )
+
+sqlite3 = sqlite_backend.sqlite3
 
 
 def _capture_creation_site() -> str:
@@ -572,6 +574,7 @@ class AsyncBaseDB(AbstractBaseDB):
         Example:
             pk = await db.upsert_one("t", {"id": 1, "x": 2})
         """
+        sqlite_backend.ensure_upsert_supported()
         async with self._upsert_lock:
             pk_col = await self._primary_key(table)
             cols = row.keys()
@@ -585,18 +588,14 @@ class AsyncBaseDB(AbstractBaseDB):
                 return cur.lastrowid
 
             update_cols = [c for c in cols if c != pk_col]
-            update_sql = ""
             if update_cols:
-                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+            else:
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
 
-            try:
-                cur = await self.execute(insert_sql, row)
-                return row.get(pk_col, cur.lastrowid)
-            except sqlite3.IntegrityError:
-                if update_sql:
-                    await self.execute(update_sql, row)
-                return row[pk_col]
+            cur = await self.execute(upsert_sql, row)
+            return row.get(pk_col, cur.lastrowid)
 
     @require_init
     async def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
@@ -606,6 +605,7 @@ class AsyncBaseDB(AbstractBaseDB):
         Example:
             await db.upsert_many("t", [{"id": 1, "x": 2}, {"id": 2, "x": 3}])
         """
+        sqlite_backend.ensure_upsert_supported()
         async with self._upsert_lock:
             if not rows:
                 return
@@ -615,18 +615,14 @@ class AsyncBaseDB(AbstractBaseDB):
             placeholders = ", ".join([f":{c}" for c in cols])
             insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
             update_cols = [c for c in cols if c != pk_col]
-            update_sql = ""
             if update_cols:
-                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col} = :{pk_col}"
+                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+            else:
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
             for row in rows:
-                try:
-                    logger.debug("Executing SQL: %s; params: %s", insert_sql, row)
-                    await self.conn.execute(insert_sql, row)
-                except sqlite3.IntegrityError:
-                    if update_sql:
-                        logger.debug("Executing SQL: %s; params: %s", update_sql, row)
-                        await self.conn.execute(update_sql, row)
+                logger.debug("Executing SQL: %s; params: %s", upsert_sql, row)
+                await self.conn.execute(upsert_sql, row)
         await self._maybe_commit()
         self._on_query()
 
