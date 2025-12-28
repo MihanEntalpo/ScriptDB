@@ -1,5 +1,4 @@
 import contextlib
-import sqlite3
 import logging
 import threading
 import re
@@ -24,6 +23,7 @@ from typing import (
     Tuple,
 )
 
+from . import sqlite_backend
 from .abstractdb import (
     AbstractBaseDB,
     require_init,
@@ -43,6 +43,8 @@ from ._rowfactory import (
 )
 
 logger = logging.getLogger(__name__)
+
+sqlite3: Any = sqlite_backend.sqlite3
 
 T = TypeVar("T", bound="SyncBaseDB")
 
@@ -385,6 +387,7 @@ class SyncBaseDB(AbstractBaseDB):
 
     @require_init
     def upsert_one(self, table: str, row: Dict[str, Any]) -> Any:
+        sqlite_backend.ensure_upsert_supported()
         with self._upsert_lock:
             pk_col = self._primary_key(table)
             cols = row.keys()
@@ -395,26 +398,17 @@ class SyncBaseDB(AbstractBaseDB):
                 cur = self.execute(insert_sql, row)
                 return cur.lastrowid
             update_cols = [c for c in cols if c != pk_col]
-            update_sql = ""
             if update_cols:
-                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}"
-            try:
-                self.conn.execute(insert_sql, row)
-            except sqlite3.IntegrityError:
-                if update_sql:
-                    self.conn.execute(update_sql, row)
-                else:
-                    if not self._in_transaction:
-                        self.conn.rollback()
-                    self._on_query()
-                    return row[pk_col]
-            self._maybe_commit()
-            self._on_query()
-            return row.get(pk_col, self.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+            else:
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
+            cur = self.execute(upsert_sql, row)
+            return row.get(pk_col, cur.lastrowid)
 
     @require_init
     def upsert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
+        sqlite_backend.ensure_upsert_supported()
         with self._upsert_lock:
             if not rows:
                 return
@@ -424,14 +418,12 @@ class SyncBaseDB(AbstractBaseDB):
             placeholders = ", ".join([f":{c}" for c in cols])
             insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
             update_cols = [c for c in cols if c != pk_col]
-            assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-            update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}" if update_cols else ""
-            for row in rows:
-                try:
-                    self.conn.execute(insert_sql, row)
-                except sqlite3.IntegrityError:
-                    if update_sql:
-                        self.conn.execute(update_sql, row)
+            if update_cols:
+                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+            else:
+                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
+            self.conn.executemany(upsert_sql, rows)
             self._maybe_commit()
             self._on_query()
 

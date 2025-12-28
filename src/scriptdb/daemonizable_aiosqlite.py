@@ -1,10 +1,12 @@
 import asyncio
-import sqlite3
 import warnings
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 from aiosqlite import Connection
+from . import sqlite_backend
+
+sqlite3: Any = sqlite_backend.sqlite3
 
 
 """

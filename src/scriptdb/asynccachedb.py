@@ -2,15 +2,17 @@
 
 import inspect
 import pickle
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from . import sqlite_backend
 from ._cache_index import _CacheKeyIndexMixin
 from .abstractdb import run_every_seconds, require_init
 from ._rowfactory import supports_row_factory
 from .asyncdb import AsyncBaseDB, _AsyncDBOpenContext, RowFactorySetting
+
+sqlite3 = sqlite_backend.sqlite3
 
 
 class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):

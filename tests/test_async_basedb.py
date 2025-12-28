@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from typing import Dict, Any
 from scriptdb import AsyncBaseDB, Builder, run_every_seconds, run_every_queries
+import scriptdb.sqlite_backend as sqlite_backend
 
 
 class MyTestDB(AsyncBaseDB):
@@ -410,6 +411,14 @@ async def test_upsert_many(db):
     await db.upsert_many("t", [{"id": 1, "x": 10}, {"id": 3, "x": 3}])
     rows = await db.query_many("SELECT id, x FROM t ORDER BY id")
     assert [(r["id"], r["x"]) for r in rows] == [(1, 10), (2, 2), (3, 3)]
+
+
+@pytest.mark.asyncio
+async def test_upsert_reports_old_sqlite(monkeypatch, db):
+    monkeypatch.setattr(sqlite_backend, "SQLITE_TOO_OLD", True)
+    monkeypatch.setattr(sqlite_backend, "UPSERT_UNSUPPORTED_MESSAGE", "too old", raising=False)
+    with pytest.raises(RuntimeError, match="too old"):
+        await db.upsert_one("t", {"id": 1, "x": 1})
 
 
 @pytest.mark.asyncio

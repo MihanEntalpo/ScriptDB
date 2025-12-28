@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
-import sqlite3
 from typing import Any, Dict, Sequence, Tuple, Type, Union, cast
+
+from . import sqlite_backend
+
+sqlite3: Any = sqlite_backend.sqlite3
 
 RowDict = Dict[str, Any]
 RowType = Union[sqlite3.Row, RowDict]
@@ -43,4 +46,3 @@ def supports_row_factory(cls: Type[Any]) -> bool:
         if parameter.kind == inspect.Parameter.VAR_KEYWORD:
             return True
     return "row_factory" in signature.parameters
-

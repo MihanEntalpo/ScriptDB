@@ -22,9 +22,10 @@ Composite primary keys are not supported; each table must have a single-column p
 
 ## Requirements
 
-ScriptDB requires SQLite version **3.21.0** or newer. This covers SQLite
-releases bundled with modern Python builds, so no additional dependency is
-needed on most systems.
+ScriptDB requires SQLite **3.24.0** or newer. Most modern Python builds ship with a recent-enough SQLite; on older
+distributions (e.g., Ubuntu 18.04) installing `scriptdb[pysqlite]` bundles a modern SQLite build. If your environment
+only provides an older SQLite, the compatibility layer will emit a warning and `upsert_one`/`upsert_many` will raise a
+clear error until you upgrade.
 
 ## Installation
 
@@ -38,6 +39,12 @@ To use the asynchronous version (installs aiosqlite):
 
 ```bash
 pip install scriptdb[async]
+```
+
+To bundle a modern SQLite build via `pysqlite3` for legacy systems:
+
+```bash
+pip install scriptdb[pysqlite]
 ```
 
 ## Sync or Async
