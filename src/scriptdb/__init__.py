@@ -22,7 +22,7 @@ __all__ = [
     "sqlite_backend_name",
     "sqlite_version",
 ]
-__version__ = "1.1.0"
+__version__ = "1.1.2"
 
 
 # Lazy-load objects that require optional dependencies so that importing

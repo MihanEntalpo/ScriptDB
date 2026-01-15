@@ -679,10 +679,15 @@ class AsyncBaseDB(AbstractBaseDB):
 
     @require_init
     async def query_many(
-        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> List[RowType]:
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> List[Any]:
         """
         Fetch all rows with parameters. Returns ``List`` of the configured row type.
+
+        ``postprocess_func`` can transform each row before returning them.
 
         Example:
             rows = await db.query_many(
@@ -697,15 +702,21 @@ class AsyncBaseDB(AbstractBaseDB):
         rows = list(await cur.fetchall())
         await cur.close()
         self._on_query()
+        if postprocess_func is not None:
+            return [postprocess_func(cast(RowType, row)) for row in rows]
         return cast(List[RowType], rows)
 
     @require_init
     async def query_many_gen(
-        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> AsyncGenerator[RowType, None]:
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> AsyncGenerator[Any, None]:
         """
         Async generator fetching rows one by one. Yields objects produced by the
-        configured row factory.
+        configured row factory. ``postprocess_func`` can transform each row
+        before yielding it.
 
         Example:
             async for row in db.query_many_gen(
@@ -718,14 +729,23 @@ class AsyncBaseDB(AbstractBaseDB):
         async with self.conn.execute(sql, ps) as cur:
             self._on_query()
             async for row in cur:
-                yield cast(RowType, row)
+                row_typed = cast(RowType, row)
+                if postprocess_func is None:
+                    yield row_typed
+                else:
+                    yield postprocess_func(row_typed)
 
     @require_init
     async def query_one(
-        self, sql: str, params: Union[Sequence[Any], Mapping[str, Any], None] = None
-    ) -> Optional[RowType]:
+        self,
+        sql: str,
+        params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> Optional[Any]:
         """
         Fetch single row with parameters. Returns row of configured type or ``None``.
+
+        ``postprocess_func`` can transform the row before returning it.
 
         Example:
             row = await db.query_one(
@@ -740,39 +760,51 @@ class AsyncBaseDB(AbstractBaseDB):
         row = await cur.fetchone()
         await cur.close()
         self._on_query()
-        return cast(Optional[RowType], row)
+        if row is None:
+            return None
+        row_typed = cast(RowType, row)
+        if postprocess_func is not None:
+            return postprocess_func(row_typed)
+        return row_typed
 
     @require_init
     async def query_scalar(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> Any:
         """Execute a query and return the first column of the first row.
+
+        ``postprocess_func`` can transform the fetched row before extracting
+        the first column.
 
         Example:
             count = await db.query_scalar(
                 "SELECT COUNT(*) FROM t WHERE x > ?", (0,)
             )
         """
-        row = await self.query_one(sql, params)
-        return None if row is None else first_column_value(row, self._rows_as_dict)
+        row = await self.query_one(sql, params, postprocess_func=postprocess_func)
+        return None if row is None else first_column_value(cast(RowType, row), self._rows_as_dict)
 
     @require_init
     async def query_column(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> List[Any]:
         """Execute a query and return a list of the first column from each row.
+
+        ``postprocess_func`` can transform each row before column extraction.
 
         Example:
             ids = await db.query_column(
                 "SELECT id FROM t WHERE x > ?", (0,)
             )
         """
-        rows = await self.query_many(sql, params)
-        return [first_column_value(row, self._rows_as_dict) for row in rows]
+        rows = await self.query_many(sql, params, postprocess_func=postprocess_func)
+        return [first_column_value(cast(RowType, row), self._rows_as_dict) for row in rows]
 
     @require_init
     async def query_dict(
@@ -782,6 +814,7 @@ class AsyncBaseDB(AbstractBaseDB):
         *,
         key: Union[str, Callable[[RowType], Any], None] = None,
         value: Union[str, Callable[[RowType], Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> Dict[Any, Any]:
         """Execute a query and return a dictionary built from rows.
 
@@ -790,7 +823,8 @@ class AsyncBaseDB(AbstractBaseDB):
 
         ``value`` controls the dictionary's values. When ``None`` (default) each
         row is stored. If a string, the named column from each row is used. If a
-        callable, its return value is stored for each row.
+        callable, its return value is stored for each row. ``postprocess_func``
+        can transform each row before key/value selection.
 
         Examples:
             # Use primary key column automatically
@@ -808,7 +842,7 @@ class AsyncBaseDB(AbstractBaseDB):
                 value=lambda row: f"{row['first_name']} {row['last_name']}",
             )
         """
-        rows = await self.query_many(sql, params)
+        rows = await self.query_many(sql, params, postprocess_func=postprocess_func)
 
         if key is None:
             match = re.search(
@@ -848,7 +882,7 @@ class AsyncBaseDB(AbstractBaseDB):
             def get_value(row: RowType) -> Any:
                 return value(row)
 
-        return {get_key(row): get_value(row) for row in rows}
+        return {get_key(cast(RowType, row)): get_value(cast(RowType, row)) for row in rows}
 
     async def close(self) -> None:
         """Close the database connection.

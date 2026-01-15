@@ -482,6 +482,37 @@ async def test_query_many_gen(db):
 
 
 @pytest.mark.asyncio
+async def test_query_postprocess_funcs(db):
+    await db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
+    first = await db.query_one(
+        "SELECT x FROM t ORDER BY x LIMIT 1",
+        postprocess_func=lambda row: row["x"] + 10,
+    )
+    assert first == 11
+
+    doubled = await db.query_many(
+        "SELECT x FROM t ORDER BY x",
+        postprocess_func=lambda row: row["x"] * 2,
+    )
+    assert doubled == [2, 4, 6]
+
+    gen_rows = [
+        row
+        async for row in db.query_many_gen(
+            "SELECT x FROM t ORDER BY x",
+            postprocess_func=lambda row: {"x": row["x"]},
+        )
+    ]
+    assert [row["x"] for row in gen_rows] == [1, 2, 3]
+
+    tripled = await db.query_column(
+        "SELECT x FROM t ORDER BY x",
+        postprocess_func=lambda row: (row["x"] * 3,),
+    )
+    assert tripled == [3, 6, 9]
+
+
+@pytest.mark.asyncio
 async def test_query_one_none(db):
     row = await db.query_one("SELECT x FROM t WHERE x=?", (999,))
     assert row is None

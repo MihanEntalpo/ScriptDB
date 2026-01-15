@@ -469,27 +469,44 @@ class SyncBaseDB(AbstractBaseDB):
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> Optional[RowType]:
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> Optional[Any]:
+        """Fetch single row with parameters.
+
+        ``postprocess_func`` can transform the row before returning it.
+        """
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         row = cur.fetchone()
         cur.close()
         self._on_query()
-        return cast(Optional[RowType], row)
+        if row is None:
+            return None
+        row_typed = cast(RowType, row)
+        if postprocess_func is not None:
+            return postprocess_func(row_typed)
+        return row_typed
 
     @require_init
     def query_many(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> List[RowType]:
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> List[Any]:
+        """Fetch all rows with parameters.
+
+        ``postprocess_func`` can transform each row before returning them.
+        """
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         rows = cur.fetchall()
         cur.close()
         self._on_query()
+        if postprocess_func is not None:
+            return [postprocess_func(cast(RowType, row)) for row in rows]
         return cast(List[RowType], rows)
 
     @require_init
@@ -497,13 +514,22 @@ class SyncBaseDB(AbstractBaseDB):
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
-    ) -> Generator[RowType, None, None]:
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
+    ) -> Generator[Any, None, None]:
+        """Generator fetching rows one by one.
+
+        ``postprocess_func`` can transform each row before yielding it.
+        """
         ps = params if params is not None else ()
         logger.debug("Executing SQL: %s; params: %s", sql, ps)
         cur = self.conn.execute(sql, ps)
         try:
             for row in cur:
-                yield cast(RowType, row)
+                row_typed = cast(RowType, row)
+                if postprocess_func is None:
+                    yield row_typed
+                else:
+                    yield postprocess_func(row_typed)
         finally:
             cur.close()
         self._on_query()
@@ -513,18 +539,20 @@ class SyncBaseDB(AbstractBaseDB):
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> Any:
-        row = self.query_one(sql, params)
-        return None if row is None else first_column_value(row, self._rows_as_dict)
+        row = self.query_one(sql, params, postprocess_func=postprocess_func)
+        return None if row is None else first_column_value(cast(RowType, row), self._rows_as_dict)
 
     @require_init
     def query_column(
         self,
         sql: str,
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> List[Any]:
-        rows = self.query_many(sql, params)
-        return [first_column_value(row, self._rows_as_dict) for row in rows]
+        rows = self.query_many(sql, params, postprocess_func=postprocess_func)
+        return [first_column_value(cast(RowType, row), self._rows_as_dict) for row in rows]
 
     @require_init
     def query_dict(
@@ -534,8 +562,9 @@ class SyncBaseDB(AbstractBaseDB):
         *,
         key: Union[str, Callable[[RowType], Any], None] = None,
         value: Union[str, Callable[[RowType], Any], None] = None,
+        postprocess_func: Optional[Callable[[RowType], Any]] = None,
     ) -> Dict[Any, Any]:
-        rows = self.query_many(sql, params)
+        rows = self.query_many(sql, params, postprocess_func=postprocess_func)
         if key is None:
             match = re.search(
                 r"from\s+(?:\"([A-Za-z_][\w]*)\"|'([A-Za-z_][\w]*)'|([A-Za-z_][\w]*))",
@@ -573,7 +602,7 @@ class SyncBaseDB(AbstractBaseDB):
             def get_value(row: RowType) -> Any:
                 return value(row)
 
-        return {get_key(row): get_value(row) for row in rows}
+        return {get_key(cast(RowType, row)): get_value(cast(RowType, row)) for row in rows}
 
     def close(self) -> None:
         """Close the database connection.
