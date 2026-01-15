@@ -1,5 +1,10 @@
 # Changelog of the ScriptDB
 
+## 1.1.2 - Post-processed query results
+
+- Added optional `postprocess_func` callbacks to query helpers to transform rows after fetching them.
+- Documented result post-processing usage and added sync/async coverage.
+
 ## 1.1.1 - SQLite backend selection and native upserts
 
 - Added a SQLite backend resolver that prefers ``pysqlite3`` when available, registers the chosen backend globally, and

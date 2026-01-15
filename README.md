@@ -405,6 +405,49 @@ from `query_dict`) as well as helpers like `query_scalar` and `query_column`.
 This makes it easy to integrate ScriptDB with codebases that prefer working
 with JSON-serialisable dictionaries instead of custom row objects.
 
+### Post-processing query results
+
+`query_one`, `query_many`, and `query_many_gen` accept an optional
+`postprocess_func` callback. When provided, ScriptDB calls it for each returned
+row so you can transform data right after reading it from SQLite. The same
+callback can also be passed to `query_scalar`, `query_column`, and `query_dict`;
+in those cases it must return a row-like object compatible with the downstream
+helper.
+
+```python
+import json
+from datetime import datetime
+
+class MyDb(SyncBaseDB):
+    def migrations(self):
+        return [
+            {
+                "name": "create_table",
+                "sql": "CREATE TABLE table(id INTEGER PRIMARY KEY, data TEXT, dt TEXT)",
+            }
+        ]
+
+with MyDb.open("./file.db", row_factory=dict) as db:
+    db.insert_one("table", {"id": 1, "data": json.dumps(data), "dt": dt.isoformat()})
+    results = db.query_many(
+        "SELECT * FROM table",
+        postprocess_func=lambda row: {
+            **row,
+            "data": json.loads(row["data"]),
+            "dt": datetime.fromisoformat(row["dt"]),
+        },
+    )
+```
+
+```python
+async with MyDb.open("./file.db", row_factory=dict) as db:
+    row = await db.query_one(
+        "SELECT * FROM table WHERE id = ?",
+        (1,),
+        postprocess_func=lambda r: {**r, "data": json.loads(r["data"])},
+    )
+```
+
 ## Useful implementations
 
 ### CacheDB

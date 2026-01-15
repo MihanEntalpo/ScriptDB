@@ -451,6 +451,35 @@ def test_query_many_gen(db):
     assert results == [1, 2, 3]
 
 
+def test_query_postprocess_funcs(db):
+    db.execute_many("INSERT INTO t(x) VALUES(?)", [(1,), (2,), (3,)])
+    first = db.query_one(
+        "SELECT x FROM t ORDER BY x LIMIT 1",
+        postprocess_func=lambda row: row["x"] + 10,
+    )
+    assert first == 11
+
+    doubled = db.query_many(
+        "SELECT x FROM t ORDER BY x",
+        postprocess_func=lambda row: row["x"] * 2,
+    )
+    assert doubled == [2, 4, 6]
+
+    gen_rows = list(
+        db.query_many_gen(
+            "SELECT x FROM t ORDER BY x",
+            postprocess_func=lambda row: {"x": row["x"]},
+        )
+    )
+    assert [row["x"] for row in gen_rows] == [1, 2, 3]
+
+    tripled = db.query_column(
+        "SELECT x FROM t ORDER BY x",
+        postprocess_func=lambda row: (row["x"] * 3,),
+    )
+    assert tripled == [3, 6, 9]
+
+
 def test_query_one_none(db):
     row = db.query_one("SELECT x FROM t WHERE x=?", (999,))
     assert row is None
