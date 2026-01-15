@@ -120,6 +120,7 @@ class MyDB(AsyncBaseDB):
                 ],
             },
         ]
+```
 
 You can bundle multiple statements into a single migration entry by separating them with semicolons; ScriptDB will
 execute them sequentially using SQLite's ``executescript``:
@@ -134,6 +135,7 @@ execute them sequentially using SQLite's ``executescript``:
 }
 ```
 
+```python
 async def main():
     async with MyDB.open("app.db") as db:  # WAL journaling is enabled by default
         await db.execute(

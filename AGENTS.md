@@ -12,4 +12,4 @@ regular Python package.
 - Install test dependencies with `pip install -e .[test]` before running tests.
 - Run `ruff check .`, `mypy src/scriptdb`, and `pytest --cov=scriptdb --cov-report=term-missing` before committing.
 - The codebase uses the `src/` layout with the package located at `src/scriptdb`.
-
+- Every time you edit the README, verify that code block formatting is correct and fences are balanced.
