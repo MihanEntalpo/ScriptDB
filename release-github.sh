@@ -19,8 +19,13 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 VERSION=$(python - <<'PY'
-import tomllib
+import importlib.util
 from pathlib import Path
+
+if importlib.util.find_spec("tomllib") is None:
+    import tomli as tomllib
+else:
+    import tomllib
 
 data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 print(data["project"]["version"])

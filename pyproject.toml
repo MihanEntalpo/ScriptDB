@@ -12,6 +12,7 @@ authors = [{name = "ScriptDB Contributors"}]
 requires-python = ">=3.8"
 keywords = ["sqlite", "migrations", "asyncio", "database"]
 dependencies = [
+    "tomli; python_version < \"3.11\"",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
