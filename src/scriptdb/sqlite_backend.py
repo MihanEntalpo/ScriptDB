@@ -18,7 +18,12 @@ def _load_sqlite_module() -> Tuple[ModuleType, str, bool]:
         backend = "pysqlite3"
         sys.modules["sqlite3"] = module
     except ImportError:
-        module = importlib.import_module("sqlite3")
+        try:
+            module = importlib.import_module("pysqlite3")
+            backend = "pysqlite3"
+            sys.modules["sqlite3"] = module
+        except ImportError:
+            module = importlib.import_module("sqlite3")
 
     version_info = getattr(module, "sqlite_version_info", (0, 0, 0))
     too_old = tuple(version_info) < MIN_SQLITE_VERSION
