@@ -27,6 +27,10 @@ distributions (e.g., Ubuntu 18.04) installing `scriptdb[pysqlite]` bundles a mod
 only provides an older SQLite, the compatibility layer will emit a warning and `upsert_one`/`upsert_many` will raise a
 clear error until you upgrade.
 
+If `pysqlite` still does not help in your environment, you can open the database with
+`legacy_sqlite_support=True`. In that mode ScriptDB emulates upserts using older SQLite-compatible SQL. It keeps
+working on legacy SQLite builds, but `upsert_one` and `upsert_many` will be slower than on modern SQLite.
+
 ## Installation
 
 To use the synchronous implementation:
@@ -46,6 +50,23 @@ To bundle a modern SQLite build via `pysqlite3` for legacy systems:
 ```bash
 pip install scriptdb[pysqlite]
 ```
+
+If you must stay on an older SQLite build, you can also enable the legacy upsert fallback:
+
+```python
+from scriptdb import SyncBaseDB
+
+
+class MyDB(SyncBaseDB):
+    def migrations(self):
+        return []
+
+
+with MyDB.open("app.db", legacy_sqlite_support=True) as db:
+    db.upsert_one("items", {"id": 1, "value": "x"})
+```
+
+This compatibility mode is slower because upserts are emulated without `ON CONFLICT ... DO UPDATE`.
 
 ## Sync or Async
 

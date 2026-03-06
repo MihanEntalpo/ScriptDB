@@ -7,6 +7,7 @@ import pathlib
 # add src path
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from scriptdb import SyncCacheDB
+import scriptdb.sqlite_backend as sqlite_backend
 
 
 @pytest.fixture
@@ -156,6 +157,15 @@ def test_sync_cache_open_requires_existing_file(tmp_path):
         SyncCacheDB.open(str(missing), auto_create=False)
     with pytest.raises(RuntimeError):
         SyncCacheDB(str(missing), auto_create=False)
+
+
+def test_sync_cache_legacy_sqlite_support(tmp_path, monkeypatch):
+    monkeypatch.setattr(sqlite_backend, "SQLITE_TOO_OLD", True)
+    db_file = tmp_path / "legacy-cache.db"
+    with SyncCacheDB.open(str(db_file), legacy_sqlite_support=True) as db:
+        with pytest.warns(RuntimeWarning, match="legacy_sqlite_support=True"):
+            db.set("a", {"x": 1})
+        assert db.get("a") == {"x": 1}
 
 
 def test_ram_index_marks_missing_rows_on_get(tmp_path):

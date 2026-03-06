@@ -12,6 +12,20 @@ RowType = Union[sqlite3.Row, RowDict]
 RowFactorySetting = Union[Type[sqlite3.Row], Type[dict]]
 
 
+def supports_init_arg(cls: Type[Any], arg_name: str) -> bool:
+    """Return True if *cls*'s ``__init__`` accepts ``arg_name``."""
+
+    try:
+        signature = inspect.signature(cls.__init__)
+    except (TypeError, ValueError):  # pragma: no cover - builtins or exotic callables
+        return True
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return arg_name in signature.parameters
+
+
 def normalize_row_factory(row_factory: RowFactorySetting) -> Tuple[RowFactorySetting, bool]:
     if row_factory is dict:
         return dict, True
@@ -37,12 +51,4 @@ def first_column_value(row: RowType, rows_as_dict: bool) -> Any:
 def supports_row_factory(cls: Type[Any]) -> bool:
     """Return True if *cls*'s __init__ accepts a row_factory argument."""
 
-    try:
-        signature = inspect.signature(cls.__init__)
-    except (TypeError, ValueError):  # pragma: no cover - builtins or exotic callables
-        return True
-
-    for parameter in signature.parameters.values():
-        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-            return True
-    return "row_factory" in signature.parameters
+    return supports_init_arg(cls, "row_factory")
