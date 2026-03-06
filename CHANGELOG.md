@@ -1,5 +1,12 @@
 # Changelog of the ScriptDB
 
+## 1.1.3 - Legacy SQLite upsert fallback
+
+- Added `legacy_sqlite_support=True` for sync and async database constructors/open helpers.
+- Enabled `upsert_one` and `upsert_many` to fall back to legacy SQLite-compatible SQL when native upsert syntax is
+  unavailable.
+- Documented that the legacy compatibility mode is slower than native upsert support.
+
 ## 1.1.2 - Post-processed query results
 
 - Added optional `postprocess_func` callbacks to query helpers to transform rows after fetching them.

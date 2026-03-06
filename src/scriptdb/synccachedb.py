@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from . import sqlite_backend
 from ._cache_index import _CacheKeyIndexMixin
-from ._rowfactory import supports_row_factory
+from ._rowfactory import supports_init_arg, supports_row_factory
 from .abstractdb import run_every_seconds, require_init
 from .syncdb import SyncBaseDB, _SyncDBOpenContext, RowFactorySetting
 
@@ -26,6 +26,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
         *,
         use_wal: bool = True,
         row_factory: RowFactorySetting = sqlite3.Row,
+        legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> None:
         super().__init__(
@@ -33,6 +34,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
             auto_create,
             row_factory=row_factory,
             use_wal=use_wal,
+            legacy_sqlite_support=legacy_sqlite_support,
             cache_keys_in_ram=cache_keys_in_ram,
         )
 
@@ -44,6 +46,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
         auto_create: bool = True,
         row_factory: RowFactorySetting = sqlite3.Row,
         use_wal: bool = True,
+        legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> "_SyncCacheDBOpenContext":
         path_obj = Path(db_path)
@@ -55,6 +58,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
             auto_create,
             use_wal,
             row_factory,
+            legacy_sqlite_support,
             cache_keys_in_ram,
         )
 
@@ -201,9 +205,10 @@ class _SyncCacheDBOpenContext(_SyncDBOpenContext["SyncCacheDB"]):
         auto_create: bool,
         use_wal: bool,
         row_factory: RowFactorySetting,
+        legacy_sqlite_support: bool,
         cache_keys_in_ram: bool,
     ) -> None:
-        super().__init__(cls, db_path, auto_create, use_wal, row_factory)
+        super().__init__(cls, db_path, auto_create, use_wal, row_factory, legacy_sqlite_support)
         self._cache_keys_in_ram = cache_keys_in_ram
 
     def _open(self) -> "SyncCacheDB":
@@ -214,11 +219,13 @@ class _SyncCacheDBOpenContext(_SyncDBOpenContext["SyncCacheDB"]):
         }
         if supports_row_factory(self._cls):
             kwargs["row_factory"] = self._row_factory
-            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
-        else:
-            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
-            if hasattr(instance, "_set_row_factory"):
-                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+        if supports_init_arg(self._cls, "legacy_sqlite_support"):
+            kwargs["legacy_sqlite_support"] = self._legacy_sqlite_support
+        instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+        if "row_factory" not in kwargs and hasattr(instance, "_set_row_factory"):
+            instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+        if "legacy_sqlite_support" not in kwargs:
+            instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
         instance.init()
         self._db = instance
         return instance

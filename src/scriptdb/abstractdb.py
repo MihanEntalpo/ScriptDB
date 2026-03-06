@@ -4,6 +4,7 @@ import abc
 import inspect
 import logging
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple, TypeVar, Union, Set, TYPE_CHECKING
 
@@ -121,7 +122,12 @@ def _is_signature_binding_error(exc: BaseException) -> bool:
 
 class AbstractBaseDB(abc.ABC):
     def __init__(
-        self, db_path: Union[str, Path], auto_create: bool = True, *, use_wal: bool = True
+        self,
+        db_path: Union[str, Path],
+        auto_create: bool = True,
+        *,
+        use_wal: bool = True,
+        legacy_sqlite_support: bool = False,
     ) -> None:
         path_obj = Path(db_path)
         if not auto_create and not path_obj.exists():
@@ -129,12 +135,14 @@ class AbstractBaseDB(abc.ABC):
         self.db_path = str(path_obj)
         self.auto_create = auto_create
         self.use_wal = use_wal
+        self.legacy_sqlite_support = legacy_sqlite_support
         self.conn: Union[sqlite3.Connection, aiosqlite.Connection, None] = None
         self.initialized: bool = False
         self._is_closed: bool = False
         self._periodic_specs: List[Tuple[int, Callable]] = []
         self._query_hooks: List[Dict[str, Any]] = []
         self._pk_cache: Dict[str, str] = {}
+        self._legacy_upsert_warning_emitted = False
 
         for name in dir(self):
             attr = getattr(self, name)
@@ -176,3 +184,21 @@ class AbstractBaseDB(abc.ABC):
         if getattr(self, "_is_closed", False):
             return RuntimeError("connection already closed")
         return RuntimeError("you didn't call init")
+
+    def _use_legacy_upsert(self) -> bool:
+        from . import sqlite_backend
+
+        return bool(self.legacy_sqlite_support and sqlite_backend.SQLITE_TOO_OLD)
+
+    def _warn_legacy_upsert_once(self) -> None:
+        if self._legacy_upsert_warning_emitted or not self._use_legacy_upsert():
+            return
+        self._legacy_upsert_warning_emitted = True
+        warnings.warn(
+            (
+                "legacy_sqlite_support=True enabled compatibility upsert mode for an older SQLite build; "
+                "ScriptDB will emulate upsert without ON CONFLICT DO UPDATE."
+            ),
+            RuntimeWarning,
+            stacklevel=3,
+        )

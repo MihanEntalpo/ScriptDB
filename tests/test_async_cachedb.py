@@ -9,6 +9,7 @@ import pathlib
 # add src path
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from scriptdb import AsyncCacheDB
+import scriptdb.sqlite_backend as sqlite_backend
 
 
 @pytest_asyncio.fixture
@@ -174,6 +175,18 @@ async def test_async_cache_open_requires_existing_file(tmp_path):
         AsyncCacheDB.open(str(missing), auto_create=False)
     with pytest.raises(RuntimeError):
         AsyncCacheDB(str(missing), auto_create=False)
+
+
+@pytest.mark.asyncio
+async def test_async_cache_legacy_sqlite_support(tmp_path, monkeypatch):
+    monkeypatch.setattr(sqlite_backend, "SQLITE_TOO_OLD", True)
+    db_file = tmp_path / "legacy-cache.db"
+    async with AsyncCacheDB.open(
+        str(db_file), daemonize_thread=True, legacy_sqlite_support=True
+    ) as db:
+        with pytest.warns(RuntimeWarning, match="legacy_sqlite_support=True"):
+            await db.set("a", {"x": 1})
+        assert await db.get("a") == {"x": 1}
 
 
 @pytest.mark.asyncio

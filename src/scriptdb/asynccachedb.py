@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from . import sqlite_backend
 from ._cache_index import _CacheKeyIndexMixin
 from .abstractdb import run_every_seconds, require_init
-from ._rowfactory import supports_row_factory
+from ._rowfactory import supports_init_arg, supports_row_factory
 from .asyncdb import AsyncBaseDB, _AsyncDBOpenContext, RowFactorySetting
 
 sqlite3 = sqlite_backend.sqlite3
@@ -26,6 +26,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         use_wal: bool = True,
         row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
+        legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> None:
         super().__init__(
@@ -34,6 +35,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             use_wal=use_wal,
             row_factory=row_factory,
             daemonize_thread=daemonize_thread,
+            legacy_sqlite_support=legacy_sqlite_support,
             cache_keys_in_ram=cache_keys_in_ram,
         )
 
@@ -46,6 +48,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         use_wal: bool = True,
         row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
+        legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
     ) -> "_AsyncCacheDBOpenContext":
         path_obj = Path(db_path)
@@ -58,6 +61,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             use_wal,
             row_factory,
             daemonize_thread,
+            legacy_sqlite_support,
             cache_keys_in_ram,
         )
 
@@ -205,9 +209,18 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
         use_wal: bool,
         row_factory: RowFactorySetting,
         daemonize_thread: bool,
+        legacy_sqlite_support: bool,
         cache_keys_in_ram: bool,
     ) -> None:
-        super().__init__(cls, db_path, auto_create, use_wal, daemonize_thread, row_factory)
+        super().__init__(
+            cls,
+            db_path,
+            auto_create,
+            use_wal,
+            daemonize_thread,
+            row_factory,
+            legacy_sqlite_support,
+        )
         self._cache_keys_in_ram = cache_keys_in_ram
 
     async def _open(self) -> "AsyncCacheDB":
@@ -219,11 +232,13 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
         }
         if supports_row_factory(self._cls):
             kwargs["row_factory"] = self._row_factory
-            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
-        else:
-            instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
-            if hasattr(instance, "_set_row_factory"):
-                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+        if supports_init_arg(self._cls, "legacy_sqlite_support"):
+            kwargs["legacy_sqlite_support"] = self._legacy_sqlite_support
+        instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+        if "row_factory" not in kwargs and hasattr(instance, "_set_row_factory"):
+            instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+        if "legacy_sqlite_support" not in kwargs:
+            instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
         await instance.init()
         instance._register_signal_handlers()
         self._db = instance

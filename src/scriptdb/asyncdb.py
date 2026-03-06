@@ -49,6 +49,7 @@ from ._rowfactory import (
     dict_row_factory,
     first_column_value,
     normalize_row_factory,
+    supports_init_arg,
     supports_row_factory,
 )
 
@@ -103,6 +104,7 @@ class _AsyncDBOpenContext(Generic[T]):
         use_wal: bool,
         daemonize_thread: bool = False,
         row_factory: RowFactorySetting = sqlite3.Row,
+        legacy_sqlite_support: bool = False,
     ) -> None:
         self._cls = cls
         self._db_path = db_path
@@ -111,14 +113,19 @@ class _AsyncDBOpenContext(Generic[T]):
         self._db: Optional[T] = None
         self._daemonize_thread = daemonize_thread
         self._row_factory, _ = normalize_row_factory(row_factory)
+        self._legacy_sqlite_support = legacy_sqlite_support
 
     async def _open(self) -> T:
+        kwargs: Dict[str, Any] = {}
         if supports_row_factory(self._cls):
-            instance = self._cls(self._db_path, row_factory=self._row_factory)  # type: ignore
-        else:
-            instance = self._cls(self._db_path)  # type: ignore
-            if hasattr(instance, "_set_row_factory"):
-                instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+            kwargs["row_factory"] = self._row_factory
+        if supports_init_arg(self._cls, "legacy_sqlite_support"):
+            kwargs["legacy_sqlite_support"] = self._legacy_sqlite_support
+        instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
+        if "row_factory" not in kwargs and hasattr(instance, "_set_row_factory"):
+            instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
+        if "legacy_sqlite_support" not in kwargs:
+            instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
         instance.daemonize_thread = self._daemonize_thread
@@ -167,8 +174,14 @@ class AsyncBaseDB(AbstractBaseDB):
         use_wal: bool = True,
         row_factory: RowFactorySetting = sqlite3.Row,
         daemonize_thread: bool = False,
+        legacy_sqlite_support: bool = False,
     ) -> None:
-        super().__init__(db_path, auto_create, use_wal=use_wal)
+        super().__init__(
+            db_path,
+            auto_create,
+            use_wal=use_wal,
+            legacy_sqlite_support=legacy_sqlite_support,
+        )
         self.conn: aiosqlite.Connection = cast(aiosqlite.Connection, None)
         self.daemonize_thread: bool = daemonize_thread
         self._periodic_tasks: List[asyncio.Task] = []
@@ -261,6 +274,7 @@ class AsyncBaseDB(AbstractBaseDB):
         use_wal: bool = True,
         daemonize_thread: bool = False,
         row_factory: RowFactorySetting = sqlite3.Row,
+        legacy_sqlite_support: bool = False,
     ) -> _AsyncDBOpenContext[T]:
         """
         Factory returning an awaitable context manager for the database instance.
@@ -281,7 +295,15 @@ class AsyncBaseDB(AbstractBaseDB):
         path_obj = Path(db_path)
         if not auto_create and not path_obj.exists():
             raise RuntimeError(f"Database file {db_path} does not exist")
-        return _AsyncDBOpenContext(cls, str(path_obj), auto_create, use_wal, daemonize_thread, row_factory)
+        return _AsyncDBOpenContext(
+            cls,
+            str(path_obj),
+            auto_create,
+            use_wal,
+            daemonize_thread,
+            row_factory,
+            legacy_sqlite_support,
+        )
 
     @abc.abstractmethod
     def migrations(self) -> List[Dict[str, Any]]:
@@ -574,8 +596,11 @@ class AsyncBaseDB(AbstractBaseDB):
         Example:
             pk = await db.upsert_one("t", {"id": 1, "x": 2})
         """
-        sqlite_backend.ensure_upsert_supported()
         async with self._upsert_lock:
+            if self._use_legacy_upsert():
+                self._warn_legacy_upsert_once()
+                return await self._legacy_upsert_one_locked(table, row)
+            sqlite_backend.ensure_upsert_supported()
             pk_col = await self._primary_key(table)
             cols = row.keys()
             col_clause = ", ".join(cols)
@@ -605,8 +630,12 @@ class AsyncBaseDB(AbstractBaseDB):
         Example:
             await db.upsert_many("t", [{"id": 1, "x": 2}, {"id": 2, "x": 3}])
         """
-        sqlite_backend.ensure_upsert_supported()
         async with self._upsert_lock:
+            if self._use_legacy_upsert():
+                self._warn_legacy_upsert_once()
+                await self._legacy_upsert_many_locked(table, rows)
+                return
+            sqlite_backend.ensure_upsert_supported()
             if not rows:
                 return
             pk_col = await self._primary_key(table)
@@ -624,6 +653,84 @@ class AsyncBaseDB(AbstractBaseDB):
                 logger.debug("Executing SQL: %s; params: %s", upsert_sql, row)
                 await self.conn.execute(upsert_sql, row)
         await self._maybe_commit()
+        self._on_query()
+
+    async def _legacy_upsert_one_locked(self, table: str, row: Dict[str, Any], *, emit_query_hook: bool = True) -> Any:
+        pk_col = await self._primary_key(table)
+        cols = tuple(row.keys())
+        col_clause = ", ".join(cols)
+        placeholders = ", ".join([f":{c}" for c in cols])
+        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        if pk_col not in row:
+            cur = await self.conn.execute(insert_sql, row)
+            await self._maybe_commit()
+            if emit_query_hook:
+                self._on_query()
+            lastrowid = cur.lastrowid
+            await cur.close()
+            return row.get(pk_col, lastrowid)
+
+        update_cols = [c for c in cols if c != pk_col]
+        started_transaction = False
+        if not self._in_transaction:
+            await self.conn.execute("BEGIN")
+            self._in_transaction = True
+            started_transaction = True
+        try:
+            if update_cols:
+                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
+                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}"
+                cur = await self.conn.execute(update_sql, row)
+                updated = cur.rowcount
+                await cur.close()
+                if updated == 0:
+                    cur = await self.conn.execute(
+                        f"INSERT OR IGNORE INTO {table} ({col_clause}) VALUES ({placeholders})",
+                        row,
+                    )
+                    inserted = cur.rowcount
+                    await cur.close()
+                    if inserted == 0:
+                        cur = await self.conn.execute(update_sql, row)
+                        await cur.close()
+            else:
+                cur = await self.conn.execute(
+                    f"INSERT OR IGNORE INTO {table} ({col_clause}) VALUES ({placeholders})",
+                    row,
+                )
+                await cur.close()
+        except Exception:
+            if started_transaction:
+                await self.conn.rollback()
+                self._in_transaction = False
+            raise
+
+        if started_transaction:
+            await self.conn.commit()
+            self._in_transaction = False
+        if emit_query_hook:
+            self._on_query()
+        return row.get(pk_col)
+
+    async def _legacy_upsert_many_locked(self, table: str, rows: List[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        started_transaction = False
+        if not self._in_transaction:
+            await self.conn.execute("BEGIN")
+            self._in_transaction = True
+            started_transaction = True
+        try:
+            for row in rows:
+                await self._legacy_upsert_one_locked(table, row, emit_query_hook=False)
+        except Exception:
+            if started_transaction:
+                await self.conn.rollback()
+                self._in_transaction = False
+            raise
+        if started_transaction:
+            await self.conn.commit()
+            self._in_transaction = False
         self._on_query()
 
     @require_init

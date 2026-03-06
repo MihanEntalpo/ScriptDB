@@ -422,6 +422,23 @@ async def test_upsert_reports_old_sqlite(monkeypatch, db):
 
 
 @pytest.mark.asyncio
+async def test_upsert_uses_legacy_fallback_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(sqlite_backend, "SQLITE_TOO_OLD", True)
+    db_file = tmp_path / "legacy.db"
+    async with MyTestDB.open(db_file, daemonize_thread=True, legacy_sqlite_support=True) as db:
+        with pytest.warns(RuntimeWarning, match="legacy_sqlite_support=True"):
+            pk = await db.upsert_one("t", {"id": 1, "x": 1})
+        assert pk == 1
+        await db.upsert_one("t", {"id": 1, "x": 9})
+        auto_pk = await db.upsert_one("t", {"x": 7})
+        assert auto_pk == 2
+        await db.upsert_many("t", [{"id": 1, "x": 11}, {"id": 3, "x": 3}, {"id": 4, "x": 4}])
+
+        rows = await db.query_many("SELECT id, x FROM t ORDER BY id")
+        assert [(row["id"], row["x"]) for row in rows] == [(1, 11), (2, 7), (3, 3), (4, 4)]
+
+
+@pytest.mark.asyncio
 async def test_upsert_waits_for_lock(db):
     await db._upsert_lock.acquire()
     t1 = asyncio.create_task(db.upsert_one("t", {"id": 1, "x": 1}))
