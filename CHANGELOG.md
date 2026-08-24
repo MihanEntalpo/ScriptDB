@@ -1,5 +1,17 @@
 # Changelog of the ScriptDB
 
+## 1.1.4 - Improved SQLite backend diagnostics
+
+- Added diagnostics for outdated, broken, stale, or conflicting `pysqlite3` and `pysqlite3-binary` installations.
+- Added backend metadata including the selected module path, installed pysqlite distributions, and preserved import
+  errors when falling back to stdlib `sqlite3`.
+- Documented troubleshooting and clean-reinstall steps for conflicting SQLite packages.
+- Added regression tests covering pysqlite distribution detection, import failures, fallback behavior, and actionable
+  warning messages.
+- Added comprehensive Markdown documentation for the full API, including sync/async usage, migrations, queries,
+  transactions, hooks, cache helpers, SQL Builder, and SQLite troubleshooting.
+- Added MkDocs configuration, `llms.txt`, and GitHub Pages deployment workflow for publishing the documentation.
+
 ## 1.1.3 - Legacy SQLite upsert fallback
 
 - Added `legacy_sqlite_support=True` for sync and async database constructors/open helpers.

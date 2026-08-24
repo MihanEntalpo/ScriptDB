@@ -31,6 +31,55 @@ If `pysqlite` still does not help in your environment, you can open the database
 `legacy_sqlite_support=True`. In that mode ScriptDB emulates upserts using older SQLite-compatible SQL. It keeps
 working on legacy SQLite builds, but `upsert_one` and `upsert_many` will be slower than on modern SQLite.
 
+### Troubleshooting pysqlite3 installations
+
+The `pysqlite3` and `pysqlite3-binary` distributions both provide the same
+`pysqlite3` import namespace. Do not normally install them together: their
+files can overwrite one another, leaving ScriptDB with an old or broken SQLite
+build. When this happens, ScriptDB reports the selected backend, SQLite
+version, module path, and the detected distribution combination.
+
+Inspect the active SQLite modules and installed distributions with:
+
+```bash
+python - <<'PY'
+import sqlite3
+print("stdlib:", sqlite3.sqlite_version, sqlite3.__file__)
+
+try:
+    import pysqlite3
+    print("pysqlite3:", pysqlite3.sqlite_version, pysqlite3.__file__)
+except ImportError as exc:
+    print("pysqlite3 import failed:", exc)
+PY
+
+python -m pip show pysqlite3
+python -m pip show pysqlite3-binary
+python -m pip freeze | grep -i sqlite
+```
+
+For a conflicting, stale, or unexpectedly old installation, remove both
+distributions and install only the binary build:
+
+```bash
+python -m pip uninstall -y pysqlite3 pysqlite3-binary
+
+python -m pip install \
+    --no-cache-dir \
+    --only-binary=:all: \
+    pysqlite3-binary
+```
+
+## Documentation
+
+The complete documentation, with examples for the synchronous and
+asynchronous APIs, migrations, queries, cache helpers, SQL builders, and
+SQLite troubleshooting, is available at
+[`mihanentalpo.github.io/scriptdb`](https://mihanentalpo.github.io/scriptdb/).
+
+The Markdown source is stored in [`docs/`](docs/) and is published to GitHub
+Pages automatically after changes to the `main` branch.
+
 ## Installation
 
 To use the synchronous implementation:

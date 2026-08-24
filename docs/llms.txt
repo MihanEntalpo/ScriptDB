@@ -1,0 +1,16 @@
+# ScriptDB documentation
+
+> Lightweight synchronous and asynchronous SQLite wrapper for Python.
+
+ScriptDB documentation:
+
+- [Home](index.md): Overview, supported interfaces, and requirements.
+- [Getting started](getting-started.md): Installation, lifecycle, options, and row factories.
+- [Migrations](migrations.md): SQL, callable, and Builder migrations.
+- [CRUD and queries](queries.md): Execution, inserts, updates, upserts, deletes, and query helpers.
+- [Transactions and hooks](transactions-hooks.md): Transactions, periodic hooks, query-count hooks, and lifecycle guards.
+- [Async API](async.md): Async operations, transactions, worker threads, and signal handling.
+- [Cache API](cache.md): Persistent key-value cache, TTL, decorators, and RAM index.
+- [SQL Builder](builder.md): CREATE, ALTER, DROP, indexes, and inferred schemas.
+- [API reference](api.md): Compact public API reference.
+- [SQLite troubleshooting](sqlite.md): Backend selection and pysqlite diagnostics.

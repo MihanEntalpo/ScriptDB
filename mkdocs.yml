@@ -1,0 +1,44 @@
+site_name: ScriptDB
+site_description: Lightweight synchronous and asynchronous SQLite wrapper for Python
+site_url: https://mihanentalpo.github.io/scriptdb/
+repo_url: https://github.com/MihanEntalpo/ScriptDB
+repo_name: MihanEntalpo/ScriptDB
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-night
+        name: Use light mode
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Core concepts:
+      - Migrations: migrations.md
+      - CRUD and queries: queries.md
+      - Transactions and hooks: transactions-hooks.md
+  - Async API: async.md
+  - Cache API: cache.md
+  - SQL Builder: builder.md
+  - API reference: api.md
+  - SQLite troubleshooting: sqlite.md

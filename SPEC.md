@@ -149,8 +149,14 @@ Responsibilities:
   - `SQLITE_VERSION`
   - `SQLITE_VERSION_INFO`
   - `SQLITE_TOO_OLD`
+- Publish `SQLITE_BACKEND_INFO`, including the selected module path, detected
+  `pysqlite3`/`pysqlite3-binary` distribution status, and any failed pysqlite
+  import diagnostic.
 - Warn if the detected SQLite is older than the minimum supported native
   upsert version.
+- Distinguish an old selected pysqlite backend from an old stdlib backend in
+  warnings, and identify simultaneous or stale pysqlite installations with
+  actionable reinstall instructions.
 - Provide `ensure_upsert_supported()` for native upsert enforcement.
 
 Minimum version policy:
