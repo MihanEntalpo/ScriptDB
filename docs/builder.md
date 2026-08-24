@@ -39,7 +39,7 @@ Options:
 
 - `if_not_exists=True` adds `IF NOT EXISTS`;
 - `without_rowid=True` adds `WITHOUT ROWID`;
-- `primary_key(name, py_type, auto_increment=..., not_null=False)` adds a
+- `primary_key(name, py_type, auto_increment=..., not_null=True)` adds a
   primary key. Integer keys auto-increment by default;
 - `add_field` and its alias `add_column` add typed columns;
 - `remove_column`, `remove_field`, and `remove_filter` remove a column already
@@ -47,6 +47,58 @@ Options:
 - `unique(*columns)` adds a table-level unique constraint;
 - `check(expression)` adds a table-level check constraint;
 - `done()` or `str(builder)` renders SQL.
+
+### `primary_key(name, py_type, *, auto_increment=..., not_null=True)`
+
+`name` is the column name and `py_type` is one of the supported Python types.
+With the default `auto_increment=...`, integer primary keys get SQLite
+`AUTOINCREMENT`; pass `False` to disable it. `auto_increment=True` is only
+valid for an integer primary key. `not_null` is ignored when auto-increment is
+enabled because SQLite implies `NOT NULL`:
+
+```python
+Builder.create_table("users").primary_key(
+    "id", int, auto_increment=False, not_null=True
+).done()
+```
+
+### `add_field(name, py_type, *, not_null=False, unique=False, default=None, check=None, references=None)`
+
+Add a typed column. `default` is rendered as a SQLite literal, `check` is a
+raw SQLite expression, and `references` is `(table, column)` or `(table, None)`:
+
+```python
+Builder.create_table("users").add_field(
+    "email",
+    str,
+    not_null=True,
+    unique=True,
+    default="unknown@example.com",
+    check="length(email) > 3",
+    references=("accounts", "email"),
+).done()
+```
+
+`add_column(name, ...)` is an exact alias for `add_field`.
+
+### `remove_column(name)`, `remove_field(name)`, and `remove_filter(name)`
+
+Remove a column already queued in a `CREATE TABLE` builder. The three methods
+are aliases. A missing name raises `ValueError`:
+
+```python
+table = Builder.create_table("users").add_field("temporary", str)
+table.remove_column("temporary")
+```
+
+### `unique(*cols)` and `check(expr)`
+
+Add table-level constraints. `unique` needs at least one column. `check` takes
+raw SQL and is not sanitized:
+
+```python
+Builder.create_table("users").unique("email").check("age >= 0").done()
+```
 
 Example with references and defaults:
 
@@ -90,11 +142,18 @@ sql = (
 
 Methods:
 
-- `add_column` / `add_field`;
-- `drop_column` / `remove_column` / `remove_field` / `remove_filter`;
+- `add_column(name, py_type, not_null=False, unique=False, default=None, check=None, references=None)`;
+- `add_field(...)` is an alias for `add_column`;
+- `drop_column(name)`;
+- `remove_column(name)`, `remove_field(name)`, and `remove_filter(name)` are aliases for `drop_column`;
 - `rename_to(new_table_name)`;
 - `rename_column(old_name, new_name)`;
 - `done()` renders all queued statements separated by newlines.
+
+`add_column` uses the same parameters and constraints as the create-table
+builder. Each call queues an action; the SQL is not executed until you pass
+the result to `db.execute()` or use it in a migration. `rename_to` changes the
+table name used by subsequent queued actions.
 
 An `ALTER TABLE` builder with no actions raises `ValueError`.
 

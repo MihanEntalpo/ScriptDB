@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
       - name: Install documentation dependencies
         run: python -m pip install mkdocs-material
       - name: Build documentation

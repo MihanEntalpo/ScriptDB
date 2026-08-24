@@ -75,7 +75,7 @@ python -m pip install \
 The complete documentation, with examples for the synchronous and
 asynchronous APIs, migrations, queries, cache helpers, SQL builders, and
 SQLite troubleshooting, is available at
-[`mihanentalpo.github.io/scriptdb`](https://mihanentalpo.github.io/scriptdb/).
+[`mihanentalpo.github.io/ScriptDB`](https://mihanentalpo.github.io/ScriptDB/).
 
 The Markdown source is stored in [`docs/`](docs/) and is published to GitHub
 Pages automatically after changes to the `main` branch.

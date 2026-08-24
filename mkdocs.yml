@@ -1,6 +1,6 @@
 site_name: ScriptDB
 site_description: Lightweight synchronous and asynchronous SQLite wrapper for Python
-site_url: https://mihanentalpo.github.io/scriptdb/
+site_url: https://mihanentalpo.github.io/ScriptDB/
 repo_url: https://github.com/MihanEntalpo/ScriptDB
 repo_name: MihanEntalpo/ScriptDB
 

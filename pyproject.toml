@@ -28,7 +28,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/MihanEntalpo/ScriptDB"
 Repository = "https://github.com/MihanEntalpo/ScriptDB"
-Documentation = "https://mihanentalpo.github.io/scriptdb/"
+Documentation = "https://mihanentalpo.github.io/ScriptDB/"
 
 [tool.setuptools.packages.find]
 where = ["src"]

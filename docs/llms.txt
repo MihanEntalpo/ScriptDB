@@ -4,13 +4,13 @@
 
 ScriptDB documentation:
 
-- [Home](index.md): Overview, supported interfaces, and requirements.
-- [Getting started](getting-started.md): Installation, lifecycle, options, and row factories.
-- [Migrations](migrations.md): SQL, callable, and Builder migrations.
-- [CRUD and queries](queries.md): Execution, inserts, updates, upserts, deletes, and query helpers.
-- [Transactions and hooks](transactions-hooks.md): Transactions, periodic hooks, query-count hooks, and lifecycle guards.
-- [Async API](async.md): Async operations, transactions, worker threads, and signal handling.
-- [Cache API](cache.md): Persistent key-value cache, TTL, decorators, and RAM index.
-- [SQL Builder](builder.md): CREATE, ALTER, DROP, indexes, and inferred schemas.
-- [API reference](api.md): Compact public API reference.
-- [SQLite troubleshooting](sqlite.md): Backend selection and pysqlite diagnostics.
+- [Home](https://mihanentalpo.github.io/ScriptDB/): Overview, supported interfaces, and requirements.
+- [Getting started](https://mihanentalpo.github.io/ScriptDB/getting-started/): Installation, lifecycle, options, and row factories.
+- [Migrations](https://mihanentalpo.github.io/ScriptDB/migrations/): SQL, callable, and Builder migrations.
+- [CRUD and queries](https://mihanentalpo.github.io/ScriptDB/queries/): Execution, inserts, updates, upserts, deletes, and query helpers.
+- [Transactions and hooks](https://mihanentalpo.github.io/ScriptDB/transactions-hooks/): Transactions, periodic hooks, query-count hooks, and lifecycle guards.
+- [Async API](https://mihanentalpo.github.io/ScriptDB/async/): Async operations, transactions, worker threads, and signal handling.
+- [Cache API](https://mihanentalpo.github.io/ScriptDB/cache/): Persistent key-value cache, TTL, decorators, and RAM index.
+- [SQL Builder](https://mihanentalpo.github.io/ScriptDB/builder/): CREATE, ALTER, DROP, indexes, and inferred schemas.
+- [API reference](https://mihanentalpo.github.io/ScriptDB/api/): Complete public API reference.
+- [SQLite troubleshooting](https://mihanentalpo.github.io/ScriptDB/sqlite/): Backend selection and pysqlite diagnostics.
