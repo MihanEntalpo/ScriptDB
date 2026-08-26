@@ -40,5 +40,11 @@ nav:
   - Async API: async.md
   - Cache API: cache.md
   - SQL Builder: builder.md
-  - API reference: api.md
+  - API reference:
+      - Overview: api.md
+      - Lifecycle and transactions: api/lifecycle.md
+      - SQL, CRUD, and upserts: api/crud.md
+      - Query helpers: api/queries.md
+      - Cache methods: api/cache.md
+      - Hooks and conversion: api/hooks.md
   - SQLite troubleshooting: sqlite.md

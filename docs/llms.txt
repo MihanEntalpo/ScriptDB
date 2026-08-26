@@ -12,5 +12,10 @@ ScriptDB documentation:
 - [Async API](https://mihanentalpo.github.io/ScriptDB/async/): Async operations, transactions, worker threads, and signal handling.
 - [Cache API](https://mihanentalpo.github.io/ScriptDB/cache/): Persistent key-value cache, TTL, decorators, and RAM index.
 - [SQL Builder](https://mihanentalpo.github.io/ScriptDB/builder/): CREATE, ALTER, DROP, indexes, and inferred schemas.
-- [API reference](https://mihanentalpo.github.io/ScriptDB/api/): Complete public API reference.
+- [API reference](https://mihanentalpo.github.io/ScriptDB/api/): API reference overview.
+- [API lifecycle](https://mihanentalpo.github.io/ScriptDB/api/lifecycle/): Opening, initialization, migrations, and transactions.
+- [API CRUD](https://mihanentalpo.github.io/ScriptDB/api/crud/): SQL execution, inserts, updates, deletes, and upserts.
+- [API queries](https://mihanentalpo.github.io/ScriptDB/api/queries/): Row fetching, streaming, scalar, column, and dictionary helpers.
+- [API cache](https://mihanentalpo.github.io/ScriptDB/api/cache/): Cache methods and memoization decorator.
+- [API hooks](https://mihanentalpo.github.io/ScriptDB/api/hooks/): Background hooks, conversion helpers, and backend diagnostics.
 - [SQLite troubleshooting](https://mihanentalpo.github.io/ScriptDB/sqlite/): Backend selection and pysqlite diagnostics.
