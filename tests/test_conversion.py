@@ -131,3 +131,24 @@ async def test_async_from_sync_closes_on_migration_error(tmp_path):
             pass
 
     assert closed
+
+
+def test_conversion_evaluates_migrations_once(tmp_path):
+    calls = 0
+
+    class Source(SyncBaseDB):
+        def migrations(self):
+            nonlocal calls
+            calls += 1
+            return [{"name": "m", "sql": "CREATE TABLE t(id INTEGER PRIMARY KEY)"}]
+
+    Converted = async_from_sync(Source)
+
+    async def open_converted():
+        async with Converted.open(tmp_path / "once.db", daemonize_thread=True):
+            pass
+
+    import asyncio
+
+    asyncio.run(open_converted())
+    assert calls == 1

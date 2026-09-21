@@ -57,7 +57,7 @@ def _validated_migrations(
 
     migrations_list = source_cls.migrations(dummy)
     _ensure_sql_migrations(migrations_list, source_cls.__name__)
-    return source_cls.migrations(target_self)
+    return migrations_list
 
 
 def sync_from_async(async_cls: type[TAsync]) -> type["SyncBaseDB"]:

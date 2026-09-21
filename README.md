@@ -205,6 +205,9 @@ execute them sequentially using SQLite's ``executescript``:
 }
 ```
 
+Each migration and its `applied_migrations` marker are committed atomically.
+If any statement fails, the whole migration is rolled back.
+
 ```python
 async def main():
     async with MyDB.open("app.db") as db:  # WAL journaling is enabled by default
@@ -241,6 +244,13 @@ context manager as shown above. If you call `MyDB.open()` without a context
 manager, remember to `await db.close()` when finished. Leaving a database open
 may keep background tasks alive and prevent your application from exiting
 cleanly.
+
+ScriptDB does not install signal handlers by default, so it will not replace
+an application's existing `SIGINT` or `SIGTERM` handling. Standalone scripts
+can opt in with `MyDB.open("app.db", handle_signals=True)`; the registered
+handlers schedule `close()` on the running event loop.
+When enabled, multiple databases share the handler, and ScriptDB restores the
+previous application handler after the last database closes.
 
 ### Daemonizable aiosqlite
 
@@ -424,6 +434,12 @@ If you need full control, you can also call `begin()`, `commit()`, and
 `rollback()` directly on `AsyncBaseDB` and `SyncBaseDB` instances. Nested
 transactions are not supported—calling `begin()` or `transaction()` while a
 transaction is already active raises a `RuntimeError`.
+While a transaction is active, operations from other threads or asyncio tasks
+wait until it commits or rolls back instead of joining it. Bulk write helpers
+also roll back their complete batch if one row fails.
+
+SQLite foreign-key enforcement is enabled for every ScriptDB connection, so
+constraints produced by Builder's `references=` option are enforced.
 
 ### Query helpers
 
@@ -593,11 +609,11 @@ with SyncCacheDB.open("cache.db", cache_keys_in_ram=True) as cache:
 
 When the RAM index is active, `is_set` no longer queries SQLite and `get`
 skips disk access for missing keys by consulting the in-memory map first.
-Because this map reflects only the current process, avoid multiprocessing and
-do not modify the same database from other processes or threads — doing so would
-desynchronize the cached keys. Storing every key in memory also increases RAM
-usage proportionally to the number of cached entries, so plan for that overhead
-before enabling the mode on very large caches.
+The index intentionally reflects only cache operations in the current process;
+do not use it when another process modifies the same cache database. Storing
+every key in memory also increases RAM usage proportionally to the number of
+cached entries, so plan for that overhead before enabling the mode on very
+large caches.
 
 ## Simple DDL query builder
 

@@ -82,7 +82,8 @@ async with db.transaction():
 ```
 
 The explicit methods `begin()`, `commit()`, and `rollback()` are also
-available. Transactions are not nested.
+available. Transactions are not nested. While one task owns a transaction,
+database operations from other tasks wait for it to finish.
 
 ## Daemonized worker thread
 
@@ -99,10 +100,23 @@ option only when that tradeoff is acceptable.
 
 ## Signal handling
 
-Async databases register handlers for `SIGINT` and `SIGTERM` and schedule
-`close()` on the running event loop. Handlers are removed during close. Your
-application should still use an `async with` block or explicitly close the
-database in its shutdown path.
+Async databases do not change application signal handlers by default. Close
+the database from your application's shutdown path or use an `async with`
+block.
+
+For standalone scripts, pass `handle_signals=True` to register handlers for
+`SIGINT` and `SIGTERM` that schedule `close()` on the running event loop:
+
+```python
+async with AppDB.open("app.db", handle_signals=True) as db:
+    await run_script(db)
+```
+
+This option temporarily replaces existing event-loop handlers for those
+signals. Multiple ScriptDB instances share one dispatcher, and the previous
+handler is restored after the last instance closes. Applications that need
+their handler to run during shutdown should leave this option disabled and
+close ScriptDB from that handler.
 
 ## Async migrations and hooks
 

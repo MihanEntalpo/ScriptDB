@@ -82,6 +82,10 @@ Both database classes accept these common options:
 `True` if an aiosqlite worker thread prevents process exit, but remember that
 a daemon thread can be terminated while work is still in flight.
 
+They also accept `handle_signals`, which defaults to `False`. Enable it only
+when ScriptDB should own the process `SIGINT` and `SIGTERM` handlers; otherwise
+close the database from the application's existing shutdown path.
+
 `auto_create=False` is useful when opening an existing database is required:
 
 ```python

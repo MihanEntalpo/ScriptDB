@@ -1,6 +1,7 @@
 """Asynchronous cache database implementation."""
 
 import inspect
+import contextlib
 import pickle
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         daemonize_thread: bool = False,
         legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
+        handle_signals: bool = False,
     ) -> None:
         super().__init__(
             db_path,
@@ -37,6 +39,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             daemonize_thread=daemonize_thread,
             legacy_sqlite_support=legacy_sqlite_support,
             cache_keys_in_ram=cache_keys_in_ram,
+            handle_signals=handle_signals,
         )
 
     @classmethod
@@ -50,6 +53,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
         daemonize_thread: bool = False,
         legacy_sqlite_support: bool = False,
         cache_keys_in_ram: bool = False,
+        handle_signals: bool = False,
     ) -> "_AsyncCacheDBOpenContext":
         path_obj = Path(db_path)
         if not auto_create and not path_obj.exists():
@@ -63,13 +67,18 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
             daemonize_thread,
             legacy_sqlite_support,
             cache_keys_in_ram,
+            handle_signals,
         )
 
     async def init(self) -> None:
         await super().init()
-        if self._cache_keys_in_ram:
-            rows = await self.query_many("SELECT key, expire_utc FROM cache")
-            self._reload_ram_index(rows)
+        try:
+            if self._cache_keys_in_ram:
+                rows = await self.query_many("SELECT key, expire_utc FROM cache")
+                self._reload_ram_index(rows)
+        except BaseException:
+            await self.close()
+            raise
 
     def migrations(self):
         return [
@@ -137,7 +146,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
 
     @require_init
     async def del_many(self, key_mask: str) -> int:
-        pattern = key_mask.replace("_", "\\_").replace("*", "%")
+        pattern = key_mask.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
         keys_to_remove: List[str] = []
         if self._cache_keys_in_ram:
             keys_to_remove = [
@@ -154,7 +163,7 @@ class AsyncCacheDB(_CacheKeyIndexMixin, AsyncBaseDB):
 
     @require_init
     async def keys(self, key_mask: str) -> List[str]:
-        pattern = key_mask.replace("_", "\\_").replace("*", "%")
+        pattern = key_mask.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
         return await self.query_column(
             ("SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)"),
             (pattern, datetime.now(timezone.utc).isoformat()),
@@ -211,6 +220,7 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
         daemonize_thread: bool,
         legacy_sqlite_support: bool,
         cache_keys_in_ram: bool,
+        handle_signals: bool,
     ) -> None:
         super().__init__(
             cls,
@@ -220,6 +230,7 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
             daemonize_thread,
             row_factory,
             legacy_sqlite_support,
+            handle_signals,
         )
         self._cache_keys_in_ram = cache_keys_in_ram
 
@@ -234,12 +245,21 @@ class _AsyncCacheDBOpenContext(_AsyncDBOpenContext["AsyncCacheDB"]):
             kwargs["row_factory"] = self._row_factory
         if supports_init_arg(self._cls, "legacy_sqlite_support"):
             kwargs["legacy_sqlite_support"] = self._legacy_sqlite_support
+        if supports_init_arg(self._cls, "handle_signals"):
+            kwargs["handle_signals"] = self._handle_signals
         instance = self._cls(self._db_path, **kwargs)  # type: ignore[call-arg]
         if "row_factory" not in kwargs and hasattr(instance, "_set_row_factory"):
             instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         if "legacy_sqlite_support" not in kwargs:
             instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
-        await instance.init()
-        instance._register_signal_handlers()
+        if "handle_signals" not in kwargs:
+            instance.handle_signals = self._handle_signals  # type: ignore[attr-defined]
+        try:
+            await instance.init()
+            instance._register_signal_handlers()
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await instance.close()
+            raise
         self._db = instance
         return instance

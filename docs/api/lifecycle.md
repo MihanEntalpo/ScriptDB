@@ -11,7 +11,9 @@ Returns a context manager for a database subclass. `db_path` is a string or
 `row_factory` is either `sqlite3.Row` (default) or `dict`. `use_wal` controls
 WAL mode, and `legacy_sqlite_support` enables old-SQLite upsert emulation only
 when the selected SQLite is below 3.24.0. Async `open()` also accepts
-`daemonize_thread`.
+`daemonize_thread` and `handle_signals`. Signal handling is disabled by
+default; `handle_signals=True` registers `SIGINT` and `SIGTERM` handlers that
+schedule async database closure.
 
 ```python
 with AppDB.open("app.db", row_factory=dict, use_wal=False) as db:
@@ -27,7 +29,8 @@ SQLite connection.
 ## `init() -> None`
 
 Opens the connection, configures SQLite, creates the migration table, applies
-pending migrations, and starts registered hooks. The async method is awaited.
+pending migrations, enables foreign-key enforcement, and starts registered
+hooks. The async method is awaited.
 
 ```python
 db = AppDB("app.db")
@@ -39,7 +42,7 @@ finally:
 ```
 
 If initialization or a migration fails, the exception is re-raised and the
-database is not left in an initialized state.
+database is not left in an initialized state or with an open connection.
 
 ## `close() -> None`
 
@@ -51,7 +54,7 @@ await async_db.close()
 ```
 
 Use a context manager whenever possible. Async close also removes signal
-handlers registered by `AsyncBaseDB`.
+handlers registered when `handle_signals=True`.
 
 ## `migrations() -> list[dict]`
 
@@ -130,3 +133,5 @@ async with async_db.transaction():
 
 Nested transactions are not supported. Automatic commits from individual
 helpers are suspended while this context is active.
+The transaction owns the connection operation lock, so another thread or
+asyncio task waits rather than accidentally joining the transaction.

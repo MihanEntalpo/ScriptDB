@@ -1,6 +1,7 @@
 """Synchronous cache database implementation."""
 
 import asyncio
+import contextlib
 import inspect
 import pickle
 from datetime import datetime, timedelta, timezone
@@ -64,9 +65,13 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
 
     def init(self) -> None:
         super().init()
-        if self._cache_keys_in_ram:
-            rows = self.query_many("SELECT key, expire_utc FROM cache")
-            self._reload_ram_index(rows)
+        try:
+            if self._cache_keys_in_ram:
+                rows = self.query_many("SELECT key, expire_utc FROM cache")
+                self._reload_ram_index(rows)
+        except BaseException:
+            self.close()
+            raise
 
     def migrations(self):
         return [
@@ -134,7 +139,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
 
     @require_init
     def del_many(self, key_mask: str) -> int:
-        pattern = key_mask.replace("_", "\\_").replace("*", "%")
+        pattern = key_mask.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
         keys_to_remove: List[str] = []
         if self._cache_keys_in_ram:
             keys_to_remove = [
@@ -151,7 +156,7 @@ class SyncCacheDB(_CacheKeyIndexMixin, SyncBaseDB):
 
     @require_init
     def keys(self, key_mask: str) -> List[str]:
-        pattern = key_mask.replace("_", "\\_").replace("*", "%")
+        pattern = key_mask.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
         return self.query_column(
             ("SELECT key FROM cache WHERE key LIKE ? ESCAPE '\\' AND (expire_utc IS NULL OR expire_utc > ?)"),
             (pattern, datetime.now(timezone.utc).isoformat()),
@@ -226,6 +231,11 @@ class _SyncCacheDBOpenContext(_SyncDBOpenContext["SyncCacheDB"]):
             instance._set_row_factory(self._row_factory)  # type: ignore[attr-defined]
         if "legacy_sqlite_support" not in kwargs:
             instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
-        instance.init()
+        try:
+            instance.init()
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                instance.close()
+            raise
         self._db = instance
         return instance

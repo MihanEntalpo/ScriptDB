@@ -44,6 +44,9 @@ except Exception:
 
 Calling `commit()` or `rollback()` without an active transaction, or calling
 `begin()` twice, raises `RuntimeError`.
+The active transaction holds the connection operation lock. Other threads or
+asyncio tasks wait until it finishes instead of contributing writes that may
+later be rolled back by the owner.
 
 ## Periodic hooks: `run_every_seconds`
 
@@ -64,8 +67,9 @@ class AppDB(SyncBaseDB):
 ```
 
 The sync hook runs in a daemon thread. The async hook runs as an asyncio task.
-`close()` stops the background work. Keep periodic methods short and handle
-expected application errors inside the method.
+`close()` stops the background work. Hook exceptions are logged and later
+runs continue. Intervals must be finite positive numbers. Keep periodic
+methods short and handle expected application errors inside the method.
 
 ## Query-count hooks: `run_every_queries`
 

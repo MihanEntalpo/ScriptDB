@@ -69,14 +69,15 @@ Insert a list of mappings:
 db.insert_many(
     "tasks",
     [
-        {"title": "Write docs"},
+        {"title": "Write docs", "priority": 1},
         {"title": "Run tests", "priority": 2},
     ],
 )
 ```
 
-An empty list is a no-op. All mappings should have compatible keys; for
-different shapes, use separate calls or raw SQL.
+An empty list is a no-op. Every mapping must have the same keys or ScriptDB
+raises `ValueError`; for different shapes, use separate calls or raw SQL. The
+complete batch is rolled back if any row fails.
 
 ### `upsert_one(table, row)`
 
@@ -99,12 +100,12 @@ db.upsert_many(
     "tasks",
     [
         {"id": 1, "status": "done"},
-        {"id": 2, "title": "New task", "priority": 3},
+        {"id": 2, "status": "queued"},
     ],
 )
 ```
 
-Upserts are serialized with a lock. On old SQLite, pass
+Upserts are serialized with a lock and each batch is atomic. On old SQLite, pass
 `legacy_sqlite_support=True` when opening the database to use the slower
 compatibility implementation.
 

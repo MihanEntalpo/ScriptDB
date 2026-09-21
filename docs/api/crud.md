@@ -19,7 +19,9 @@ await async_db.execute("UPDATE users SET name=:name WHERE id=:id", {
 })
 ```
 
-Writes commit automatically unless a transaction is active.
+Writes commit automatically unless a transaction is active. Table and column
+identifiers accepted by CRUD helpers are quoted; raw SQL and `where`
+expressions remain the caller's responsibility.
 
 ## `execute_many(sql, seq_params) -> Cursor`
 
@@ -32,8 +34,8 @@ db.execute_many(
 )
 ```
 
-`seq_params` is an iterable of sequences, not a mapping. Use a transaction for
-atomicity with other statements.
+`seq_params` is an iterable of sequences, not a mapping. The batch itself is
+atomic; use a transaction when it must also be atomic with other statements.
 
 ## `insert_one(table, row) -> Any`
 
@@ -50,13 +52,14 @@ existing row.
 
 ## `insert_many(table, rows) -> None`
 
-Insert multiple mappings using the first row's column shape:
+Insert multiple mappings with the same column shape:
 
 ```python
 db.insert_many("users", [{"name": "Alice"}, {"name": "Bob"}])
 ```
 
-An empty list is a no-op. Use compatible keys in every row.
+An empty list is a no-op. Different keys between rows raise `ValueError`, and
+any database error rolls back the complete batch.
 
 ## `upsert_one(table, row) -> Any`
 
@@ -82,7 +85,8 @@ await async_db.upsert_many(
 )
 ```
 
-An empty list is a no-op. Upserts are serialized by an internal lock.
+An empty list is a no-op. Upserts are serialized by an internal lock and the
+complete batch is rolled back if any row fails.
 
 ## `update_one(table, pk, row) -> int`
 

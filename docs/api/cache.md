@@ -13,8 +13,8 @@ with SyncCacheDB.open("cache.db", cache_keys_in_ram=True) as cache:
     ...
 ```
 
-It improves repeated negative checks but consumes memory and does not observe
-writes from another process.
+It improves repeated negative checks but consumes memory. The index is
+process-local and intentionally does not observe writes from another process.
 
 ## `get(key, default=None) -> Any`
 
@@ -53,8 +53,8 @@ removed = cache.delete("token")
 
 ## `del_many(key_mask) -> int`
 
-Delete keys matching a mask. `*` means any sequence of characters and `_` is
-treated literally:
+Delete keys matching a mask. `*` means any sequence of characters; `_`, `%`,
+and backslashes are treated literally:
 
 ```python
 cache.del_many("session:*")

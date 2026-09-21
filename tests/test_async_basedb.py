@@ -110,6 +110,57 @@ async def test_sqls_migration_rollback(tmp_path):
         conn.close()
 
 
+@pytest.mark.asyncio
+async def test_sql_migration_and_marker_are_atomic(tmp_path):
+    class BadSQLDB(AsyncBaseDB):
+        def migrations(self):
+            return [{"name": "bad", "sql": "CREATE TABLE retained(id); INSERT INTO missing VALUES(1)"}]
+
+    db_file = tmp_path / "bad-single-sql.db"
+    with pytest.raises(RuntimeError):
+        async with BadSQLDB.open(db_file, daemonize_thread=True):
+            pass
+    with sqlite3.connect(db_file) as conn:
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='retained'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM applied_migrations WHERE name='bad'").fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_failed_async_init_closes_connection(tmp_path):
+    instances = []
+
+    class BadInitDB(AsyncBaseDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+        def migrations(self):
+            return [{"name": "bad", "sql": "SELECT * FROM missing"}]
+
+    with pytest.raises(RuntimeError):
+        await BadInitDB.open(tmp_path / "failed-init.db", daemonize_thread=True)
+    assert instances[0].conn is None
+
+
+@pytest.mark.asyncio
+async def test_function_migration_and_marker_are_atomic(tmp_path):
+    class BadFunctionDB(AsyncBaseDB):
+        def migrations(self):
+            return [{"name": "bad", "function": self.bad_migration}]
+
+        async def bad_migration(self, migrations, name):
+            await self.execute("CREATE TABLE retained(id INTEGER PRIMARY KEY)")
+            await self.execute("INSERT INTO retained VALUES(1)")
+            raise RuntimeError("stop")
+
+    db_file = tmp_path / "bad-function.db"
+    with pytest.raises(RuntimeError, match="Error while applying migration bad"):
+        await BadFunctionDB.open(db_file, daemonize_thread=True)
+    with sqlite3.connect(db_file) as conn:
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='retained'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM applied_migrations WHERE name='bad'").fetchone() is None
+
+
 class _MultiSQLsDB(AsyncBaseDB):
     def migrations(self):
         return [
@@ -298,6 +349,25 @@ async def test_insert_many(db):
 @pytest.mark.asyncio
 async def test_insert_many_empty(db):
     await db.insert_many("t", [])
+
+
+@pytest.mark.asyncio
+async def test_insert_many_rolls_back_partial_batch(db):
+    await db.execute("CREATE UNIQUE INDEX idx_t_x_unique ON t(x)")
+    with pytest.raises(sqlite3.IntegrityError):
+        await db.insert_many("t", [{"x": 1}, {"x": 1}])
+    await db.insert_one("t", {"x": 2})
+    assert await db.query_column("SELECT x FROM t ORDER BY x") == [2]
+
+
+@pytest.mark.asyncio
+async def test_insert_many_rejects_mixed_columns(db):
+    with pytest.raises(ValueError, match="at least one column"):
+        await db.insert_many("t", [{}])
+    with pytest.raises(ValueError, match="different columns"):
+        await db.insert_many("t", [{"x": 1}, {"x": 2, "y": 3}])
+    with pytest.raises(ValueError, match="different columns"):
+        await db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "y": 3}])
     count = await db.query_scalar("SELECT COUNT(*) FROM t")
     assert count == 0
 
@@ -480,6 +550,76 @@ async def test_update_one_empty_dict(db):
     assert updated == 0
     row = await db.query_one("SELECT x FROM t WHERE id=?", (pk,))
     assert row["x"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_one_can_change_pk_column(db):
+    await db.insert_one("t", {"id": 1, "x": 1})
+    assert await db.update_one("t", 1, {"id": 2}) == 1
+    assert await db.query_scalar("SELECT id FROM t") == 2
+
+
+@pytest.mark.asyncio
+async def test_crud_quotes_identifiers(tmp_path):
+    class QuotedDB(AsyncBaseDB):
+        def migrations(self):
+            return [{
+                "name": "m",
+                "sql": 'CREATE TABLE "order items" ("primary key" INTEGER PRIMARY KEY, "select" INTEGER)',
+            }]
+
+    async with QuotedDB.open(tmp_path / "quoted.db", daemonize_thread=True) as quoted_db:
+        assert await quoted_db.insert_one("order items", {"primary key": 7, "select": 1}) == 7
+        assert await quoted_db.upsert_one("order items", {"primary key": 7, "select": 2}) == 7
+        assert await quoted_db.update_one("order items", 7, {"select": 3}) == 1
+        assert await quoted_db.delete_many("order items", '"select"=?', (3,)) == 1
+
+
+@pytest.mark.asyncio
+async def test_foreign_keys_are_enforced(tmp_path):
+    class ForeignKeyDB(AsyncBaseDB):
+        def migrations(self):
+            return [{
+                "name": "m",
+                "sql": (
+                    "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+                    "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));"
+                ),
+            }]
+
+    async with ForeignKeyDB.open(tmp_path / "foreign.db", daemonize_thread=True) as foreign_db:
+        assert await foreign_db.query_scalar("PRAGMA foreign_keys") == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            await foreign_db.insert_one("child", {"parent_id": 999})
+
+
+@pytest.mark.asyncio
+async def test_concurrent_task_waits_for_transaction_owner(tmp_path):
+    db = await MyTestDB.open(tmp_path / "isolated.db", daemonize_thread=True)
+    inserted = asyncio.Event()
+    allow_rollback = asyncio.Event()
+
+    async def owner():
+        with pytest.raises(RuntimeError, match="rollback"):
+            async with db.transaction():
+                await db.insert_one("t", {"id": 1, "x": 1})
+                inserted.set()
+                await allow_rollback.wait()
+                raise RuntimeError("rollback")
+
+    async def outsider():
+        await inserted.wait()
+        task = asyncio.create_task(db.insert_one("t", {"id": 2, "x": 2}))
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        allow_rollback.set()
+        await task
+
+    try:
+        await asyncio.gather(owner(), outsider())
+        assert await db.query_column("SELECT id FROM t") == [2]
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -910,6 +1050,82 @@ async def test_run_every_queries(tmp_path):
         assert db.calls == 1
     finally:
         await db.close()
+
+
+class RecursiveQueryHookDB(AsyncBaseDB):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+
+    def migrations(self):
+        return []
+
+    @run_every_queries(1)
+    async def hook(self):
+        self.calls += 1
+        await self.query_scalar("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_query_hook_does_not_recurse(tmp_path):
+    db = await RecursiveQueryHookDB.open(tmp_path / "recursive-hook.db", daemonize_thread=True)
+    try:
+        await db.query_scalar("SELECT 1")
+        await asyncio.sleep(0)
+        assert db.calls == 1
+    finally:
+        await db.close()
+
+
+class FailingQueryHookDB(AsyncBaseDB):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+
+    def migrations(self):
+        return []
+
+    @run_every_queries(1)
+    async def hook(self):
+        self.calls += 1
+        raise RuntimeError("hook failure")
+
+
+@pytest.mark.asyncio
+async def test_query_hook_failure_is_non_fatal_and_future_hooks_run(tmp_path):
+    async with FailingQueryHookDB.open(
+        tmp_path / "failing-query-hook.db", daemonize_thread=True
+    ) as db:
+        assert await db.query_scalar("SELECT 1") == 1
+        await asyncio.sleep(0)
+        assert await db.query_scalar("SELECT 2") == 2
+        await asyncio.sleep(0)
+        assert db.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_periodic_hook_failure_is_non_fatal(tmp_path):
+    class FailingPeriodicDB(AsyncBaseDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.calls = 0
+            self.ran_twice = asyncio.Event()
+
+        def migrations(self):
+            return []
+
+        @run_every_seconds(0.01)
+        async def tick(self):
+            self.calls += 1
+            if self.calls >= 2:
+                self.ran_twice.set()
+            raise RuntimeError("periodic failure")
+
+    async with FailingPeriodicDB.open(
+        tmp_path / "failing-periodic.db", daemonize_thread=True
+    ) as db:
+        await asyncio.wait_for(db.ran_twice.wait(), timeout=1)
+        assert db.calls >= 2
 
 
 @pytest.mark.asyncio

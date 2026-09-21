@@ -11,7 +11,8 @@ def cleanup(self):
 ```
 
 Sync methods run in a daemon thread; async methods run as tasks. `close()`
-stops the registered work.
+stops the registered work. An exception is logged and does not permanently
+stop later runs. Zero, negative, infinite, and NaN intervals are rejected.
 
 ## `run_every_queries(queries) -> decorator`
 
@@ -23,8 +24,10 @@ async def checkpoint(self):
     await self.execute("PRAGMA wal_checkpoint")
 ```
 
-The counter resets after scheduling. Keep hooks short and handle expected
-application errors inside them.
+The counter resets after scheduling. A hook is not scheduled recursively by
+its own database queries. Exceptions are logged; keep hooks short and handle
+expected application errors inside them. Query intervals must be positive
+integers.
 
 ## `require_init(method) -> method`
 

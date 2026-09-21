@@ -138,9 +138,10 @@ with SyncCacheDB.open("cache.db", cache_keys_in_ram=True) as cache:
 ```
 
 This speeds up repeated negative existence checks and lets `get()` avoid a
-database query for known-missing keys. The index is process-local and consumes
-memory proportional to the number of keys. Do not use it as the source of
-truth when another process modifies the same cache.
+database query for known-missing keys. The index is process-local, is maintained
+by the cache API, and consumes memory proportional to the number of keys.
+Missing keys are normal cache misses; do not use this mode when another process
+modifies the same cache database.
 
 Expired entries are cleaned periodically. `expire_sec=None` entries remain
 until explicitly deleted or cleared.

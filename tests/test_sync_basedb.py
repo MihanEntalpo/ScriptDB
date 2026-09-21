@@ -109,6 +109,56 @@ def test_sqls_migration_rollback(tmp_path):
         conn.close()
 
 
+def test_sql_migration_and_marker_are_atomic(tmp_path):
+    class BadSQLDB(SyncBaseDB):
+        def migrations(self):
+            return [{"name": "bad", "sql": "CREATE TABLE retained(id); INSERT INTO missing VALUES(1)"}]
+
+    db_file = tmp_path / "bad-single-sql.db"
+    with pytest.raises(RuntimeError):
+        with BadSQLDB.open(db_file):
+            pass
+    with sqlite3.connect(db_file) as conn:
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='retained'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM applied_migrations WHERE name='bad'").fetchone() is None
+
+
+def test_failed_sync_init_closes_connection(tmp_path):
+    instances = []
+
+    class BadInitDB(SyncBaseDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+        def migrations(self):
+            return [{"name": "bad", "sql": "SELECT * FROM missing"}]
+
+    with pytest.raises(RuntimeError):
+        with BadInitDB.open(tmp_path / "failed-init.db"):
+            pass
+    assert instances[0].conn is None
+
+
+def test_function_migration_and_marker_are_atomic(tmp_path):
+    class BadFunctionDB(SyncBaseDB):
+        def migrations(self):
+            return [{"name": "bad", "function": self.bad_migration}]
+
+        def bad_migration(self, migrations, name):
+            self.execute("CREATE TABLE retained(id INTEGER PRIMARY KEY)")
+            self.execute("INSERT INTO retained VALUES(1)")
+            raise RuntimeError("stop")
+
+    db_file = tmp_path / "bad-function.db"
+    with pytest.raises(RuntimeError, match="Error while applying migration bad"):
+        with BadFunctionDB.open(db_file):
+            pass
+    with sqlite3.connect(db_file) as conn:
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='retained'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM applied_migrations WHERE name='bad'").fetchone() is None
+
+
 class _MultiSQLsDB(SyncBaseDB):
     def migrations(self):
         return [
@@ -284,6 +334,23 @@ def test_insert_many(db):
 
 def test_insert_many_empty(db):
     db.insert_many("t", [])
+
+
+def test_insert_many_rolls_back_partial_batch(db):
+    db.execute("CREATE UNIQUE INDEX idx_t_x_unique ON t(x)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_many("t", [{"x": 1}, {"x": 1}])
+    db.insert_one("t", {"x": 2})
+    assert db.query_column("SELECT x FROM t ORDER BY x") == [2]
+
+
+def test_insert_many_rejects_mixed_columns(db):
+    with pytest.raises(ValueError, match="at least one column"):
+        db.insert_many("t", [{}])
+    with pytest.raises(ValueError, match="different columns"):
+        db.insert_many("t", [{"x": 1}, {"x": 2, "y": 3}])
+    with pytest.raises(ValueError, match="different columns"):
+        db.upsert_many("t", [{"id": 1, "x": 1}, {"id": 2, "y": 3}])
     count = db.query_scalar("SELECT COUNT(*) FROM t")
     assert count == 0
 
@@ -451,6 +518,72 @@ def test_update_one_empty_dict(db):
     assert updated == 0
     row = db.query_one("SELECT x FROM t WHERE id=?", (pk,))
     assert row["x"] == 1
+
+
+def test_update_one_can_change_pk_column(db):
+    db.insert_one("t", {"id": 1, "x": 1})
+    assert db.update_one("t", 1, {"id": 2}) == 1
+    assert db.query_scalar("SELECT id FROM t") == 2
+
+
+def test_crud_quotes_identifiers(tmp_path):
+    class QuotedDB(SyncBaseDB):
+        def migrations(self):
+            return [{
+                "name": "m",
+                "sql": 'CREATE TABLE "order items" ("primary key" INTEGER PRIMARY KEY, "select" INTEGER)',
+            }]
+
+    with QuotedDB.open(tmp_path / "quoted.db") as quoted_db:
+        assert quoted_db.insert_one("order items", {"primary key": 7, "select": 1}) == 7
+        assert quoted_db.upsert_one("order items", {"primary key": 7, "select": 2}) == 7
+        assert quoted_db.update_one("order items", 7, {"select": 3}) == 1
+        assert quoted_db.delete_many("order items", '"select"=?', (3,)) == 1
+
+
+def test_foreign_keys_are_enforced(tmp_path):
+    class ForeignKeyDB(SyncBaseDB):
+        def migrations(self):
+            return [{
+                "name": "m",
+                "sql": (
+                    "CREATE TABLE parent(id INTEGER PRIMARY KEY);"
+                    "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));"
+                ),
+            }]
+
+    with ForeignKeyDB.open(tmp_path / "foreign.db") as foreign_db:
+        assert foreign_db.query_scalar("PRAGMA foreign_keys") == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            foreign_db.insert_one("child", {"parent_id": 999})
+
+
+def test_concurrent_thread_waits_for_transaction_owner(db):
+    worker_finished = threading.Event()
+    worker_errors = []
+
+    def worker():
+        try:
+            db.insert_one("t", {"id": 2, "x": 2})
+        except BaseException as exc:
+            worker_errors.append(exc)
+        finally:
+            worker_finished.set()
+
+    thread = None
+    with pytest.raises(RuntimeError, match="rollback"):
+        with db.transaction():
+            db.insert_one("t", {"id": 1, "x": 1})
+            thread = threading.Thread(target=worker)
+            thread.start()
+            assert not worker_finished.wait(timeout=0.05)
+            raise RuntimeError("rollback")
+
+    assert thread is not None
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert worker_errors == []
+    assert db.query_column("SELECT id FROM t") == [2]
 
 
 def test_update_one_missing_table(db):
@@ -832,6 +965,32 @@ def test_run_every_seconds(tmp_path):
         db.close()
 
 
+def test_close_waits_for_running_periodic_hook(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingPeriodicDB(SyncBaseDB):
+        def migrations(self):
+            return []
+
+        @run_every_seconds(0.01)
+        def tick(self):
+            started.set()
+            release.wait(timeout=1)
+            self.query_scalar("SELECT 1")
+
+    db = BlockingPeriodicDB.open(tmp_path / "blocking-periodic.db")._open()
+    assert started.wait(timeout=1)
+    closer = threading.Thread(target=db.close)
+    closer.start()
+    time.sleep(0.02)
+    assert closer.is_alive()
+    release.set()
+    closer.join(timeout=1)
+    assert not closer.is_alive()
+    assert db.conn is None
+
+
 class QueryHookDB(SyncBaseDB):
     def __init__(self, path: str):
         super().__init__(path)
@@ -855,6 +1014,69 @@ def test_run_every_queries(tmp_path):
         assert db.calls == 1
     finally:
         db.close()
+
+
+class RecursiveQueryHookDB(SyncBaseDB):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+
+    def migrations(self):
+        return []
+
+    @run_every_queries(1)
+    def hook(self):
+        self.calls += 1
+        self.query_scalar("SELECT 1")
+
+
+def test_query_hook_does_not_recurse(tmp_path):
+    with RecursiveQueryHookDB.open(tmp_path / "recursive-hook.db") as db:
+        db.query_scalar("SELECT 1")
+        assert db.calls == 1
+
+
+class FailingQueryHookDB(SyncBaseDB):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+
+    def migrations(self):
+        return []
+
+    @run_every_queries(1)
+    def hook(self):
+        self.calls += 1
+        raise RuntimeError("hook failure")
+
+
+def test_query_hook_failure_is_non_fatal_and_future_hooks_run(tmp_path):
+    with FailingQueryHookDB.open(tmp_path / "failing-query-hook.db") as db:
+        assert db.query_scalar("SELECT 1") == 1
+        assert db.query_scalar("SELECT 2") == 2
+        assert db.calls == 2
+
+
+def test_periodic_hook_failure_is_non_fatal(tmp_path):
+    class FailingPeriodicDB(SyncBaseDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.calls = 0
+            self.ran_twice = threading.Event()
+
+        def migrations(self):
+            return []
+
+        @run_every_seconds(0.01)
+        def tick(self):
+            self.calls += 1
+            if self.calls >= 2:
+                self.ran_twice.set()
+            raise RuntimeError("periodic failure")
+
+    with FailingPeriodicDB.open(tmp_path / "failing-periodic.db") as db:
+        assert db.ran_twice.wait(timeout=1)
+        assert db.calls >= 2
 
 
 @pytest.mark.parametrize(

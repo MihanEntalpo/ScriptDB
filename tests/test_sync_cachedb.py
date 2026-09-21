@@ -56,6 +56,34 @@ def test_del_many_keys_clear(db):
     assert db.keys("*") == []
 
 
+def test_key_masks_treat_sql_wildcards_literally(db):
+    backslash_key = "rate" + "\\"
+    for key in ("rate%", "rate_", backslash_key, "rateX"):
+        db.set(key, key)
+    assert db.keys("rate%") == ["rate%"]
+    assert db.keys("rate_") == ["rate_"]
+    assert db.keys(backslash_key) == [backslash_key]
+    assert db.del_many("rate%") == 1
+    assert set(db.keys("rate*")) == {"rate_", backslash_key, "rateX"}
+
+
+def test_failed_ram_index_initialization_closes_connection(tmp_path):
+    instances = []
+
+    class BadRAMIndexDB(SyncCacheDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+        def _reload_ram_index(self, rows):
+            raise RuntimeError("index failure")
+
+    with pytest.raises(RuntimeError, match="index failure"):
+        with BadRAMIndexDB.open(tmp_path / "bad-index.db", cache_keys_in_ram=True):
+            pass
+    assert instances[0].conn is None
+
+
 def test_cache_decorator(db):
     calls = {"add": 0}
 

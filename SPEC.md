@@ -189,6 +189,7 @@ Connection behavior:
 
 - Uses `sqlite3.connect(..., check_same_thread=False)`.
 - Enables WAL by default unless `use_wal=False`.
+- Enables SQLite foreign-key enforcement on every connection.
 - Supports `row_factory` configuration:
   - `sqlite3.Row`
   - `dict`
@@ -211,6 +212,9 @@ Transaction behavior:
   - `commit()`
   - `rollback()`
   - `transaction()` context manager
+- A transaction holds a reentrant per-connection operation lock until commit
+  or rollback, so work from another thread cannot enter that transaction.
+- Batch helpers use savepoints and roll back the entire batch on failure.
 
 Query/command helpers:
 
@@ -276,7 +280,7 @@ Core responsibilities:
 - Provide async CRUD/query helpers.
 - Manage async transactions.
 - Schedule periodic coroutines using `asyncio.create_task`.
-- Register signal handlers to close open databases on process termination.
+- Optionally register signal handlers to close open databases on process termination.
 - Support daemonized `aiosqlite` worker threads through an internal wrapper.
 
 Initialization flow:
@@ -297,6 +301,9 @@ Transaction behavior:
   - `rollback()`
   - `transaction()` async context manager
 - Auto-commit is skipped when a manual transaction is active.
+- A transaction holds a task-reentrant per-connection operation lock until
+  commit or rollback, preventing other tasks from joining it accidentally.
+- Batch helpers use savepoints and roll back the entire batch on failure.
 
 Query/command helpers:
 
@@ -316,9 +323,12 @@ Upsert behavior:
 
 Signal handling:
 
-- Registers handlers for `SIGINT` and `SIGTERM`.
+- Does not change application signal handlers by default.
+- With `handle_signals=True`, registers handlers for `SIGINT` and `SIGTERM`.
 - On signal, schedules `close()`.
-- Removes registered handlers during close.
+- Multiple opt-in databases share one dispatcher per event loop.
+- Restores the previous handler when the last opt-in database closes, unless
+  the application replaced it in the meantime.
 
 ### Cache Database Layer
 
@@ -394,6 +404,8 @@ Tradeoff:
 
 - `cache_keys_in_ram=True` improves repeated key existence checks at the cost
   of additional memory and bookkeeping.
+- The index is process-local and is kept current by the cache API; missing keys
+  are normal cache misses and do not trigger a database lookup.
 
 Legacy SQLite interaction:
 
@@ -528,9 +540,10 @@ A sequence of SQL strings or SQL builder instances.
 Behavior:
 
 - Rendered into a single script.
-- Script is wrapped in `BEGIN/COMMIT` automatically unless the user already
-  provided explicit transaction control.
+- ScriptDB normalizes explicit outer `BEGIN/COMMIT` and wraps the migration in
+  its own `BEGIN/COMMIT` transaction.
 - If a script begins a transaction but does not close it, validation fails.
+- Schema/data changes and the `applied_migrations` marker commit atomically.
 
 ### `function`
 
@@ -555,6 +568,7 @@ Applied migrations tracking:
 - Stored in `applied_migrations`.
 - `name` is the primary key.
 - `applied_at` stores a UTC timestamp.
+- A migration failure rolls back both its changes and its tracking marker.
 
 ## Public API Semantics
 
@@ -581,6 +595,7 @@ Common constructor/open options:
 Async-only options:
 
 - `daemonize_thread`
+- `handle_signals` (defaults to `False`)
 
 Cache-only options:
 

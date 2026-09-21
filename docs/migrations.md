@@ -53,6 +53,8 @@ the script as a migration unit:
 
 Do not include your own `BEGIN`/`COMMIT` inside a migration. ScriptDB manages
 the migration transaction and rejects scripts that leave a transaction open.
+Migration changes and their tracking row are committed together; a failure
+rolls back the entire migration.
 
 ## Callable migrations
 

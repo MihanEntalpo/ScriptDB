@@ -27,3 +27,8 @@ def test_connect_accepts_path(tmp_path):
     finally:
         loop.close()
         asyncio.set_event_loop(None)
+
+
+def test_daemonize_thread_marks_actual_worker_daemon():
+    conn = dai.connect(":memory:", daemonize_thread=True)
+    assert conn._thread.daemon is True

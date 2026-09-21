@@ -28,7 +28,8 @@ from scriptdb import AsyncBaseDB, AsyncCacheDB, Builder, SyncBaseDB, SyncCacheDB
 
 Common constructor options are `auto_create`, `row_factory`, `use_wal`, and
 `legacy_sqlite_support`. Async classes additionally support
-`daemonize_thread`; cache classes support `cache_keys_in_ram`.
+`daemonize_thread` and opt-in `handle_signals`; cache classes support
+`cache_keys_in_ram`.
 
 All examples in the detailed pages include parameters, return values, and
 lifecycle notes.

@@ -3,7 +3,7 @@ import sys
 import pathlib
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "src"))
-from scriptdb.abstractdb import AbstractBaseDB, require_init
+from scriptdb.abstractdb import AbstractBaseDB, require_init, run_every_queries, run_every_seconds
 
 
 @pytest.mark.asyncio
@@ -42,3 +42,15 @@ def test_abstract_base_db_migrations_not_implemented(tmp_path):
     db = DummyDB(str(tmp_path / "dummy.db"))
     with pytest.raises(NotImplementedError):
         db.migrations()
+
+
+@pytest.mark.parametrize("interval", [0, -1, True, float("nan"), float("inf"), "1"])
+def test_periodic_decorator_rejects_invalid_interval(interval):
+    with pytest.raises(ValueError):
+        run_every_seconds(interval)
+
+
+@pytest.mark.parametrize("interval", [0, -1, True, 1.5, "1"])
+def test_query_decorator_rejects_invalid_interval(interval):
+    with pytest.raises(ValueError):
+        run_every_queries(interval)

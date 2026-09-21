@@ -1,5 +1,18 @@
 # Changelog of the ScriptDB
 
+## 1.1.5 - 2026-09-18 - Reliability and lifecycle fixes
+
+- Stopped async databases from replacing application `SIGINT` and `SIGTERM` handlers by default.
+- Added the opt-in `handle_signals=True` setting for async databases and caches.
+- Fixed `daemonize_thread=True` for current aiosqlite releases.
+- Isolated manual transactions from concurrent threads/tasks and made batch writes atomic with savepoints.
+- Made migrations and their tracking markers atomic, including multi-statement `sql` migrations.
+- Enabled SQLite foreign-key enforcement and quoted CRUD table/column identifiers.
+- Fixed primary-key updates, mixed-shape bulk rows, initialization cleanup, and synchronous hook shutdown.
+- Made cache key masks treat SQL wildcard characters literally.
+- Made hook failures non-fatal, prevented recursive query hooks, validated hook intervals, and restored opt-in signal
+  handlers safely across multiple database instances.
+
 ## 1.1.4 - Improved SQLite backend diagnostics
 
 - Added diagnostics for outdated, broken, stale, or conflicting `pysqlite3` and `pysqlite3-binary` installations.

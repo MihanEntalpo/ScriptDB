@@ -30,7 +30,11 @@ class DaemonConnection(Connection):
         self.creation_site = creation_site
         super().__init__(connector, iter_chunk_size, loop)
         if daemonize_thread:
-            self.daemon = True
+            worker = getattr(self, "_thread", None)
+            if worker is not None:
+                worker.daemon = True
+            else:  # aiosqlite < 0.22, where Connection inherited Thread
+                self.daemon = True
 
 
 def connect(

@@ -64,6 +64,39 @@ async def test_del_many_keys_clear(db):
 
 
 @pytest.mark.asyncio
+async def test_key_masks_treat_sql_wildcards_literally(db):
+    backslash_key = "rate" + "\\"
+    for key in ("rate%", "rate_", backslash_key, "rateX"):
+        await db.set(key, key)
+    assert await db.keys("rate%") == ["rate%"]
+    assert await db.keys("rate_") == ["rate_"]
+    assert await db.keys(backslash_key) == [backslash_key]
+    assert await db.del_many("rate%") == 1
+    assert set(await db.keys("rate*")) == {"rate_", backslash_key, "rateX"}
+
+
+@pytest.mark.asyncio
+async def test_failed_ram_index_initialization_closes_connection(tmp_path):
+    instances = []
+
+    class BadRAMIndexDB(AsyncCacheDB):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            instances.append(self)
+
+        def _reload_ram_index(self, rows):
+            raise RuntimeError("index failure")
+
+    with pytest.raises(RuntimeError, match="index failure"):
+        await BadRAMIndexDB.open(
+            tmp_path / "bad-index.db",
+            daemonize_thread=True,
+            cache_keys_in_ram=True,
+        )
+    assert instances[0].conn is None
+
+
+@pytest.mark.asyncio
 async def test_cache_decorator(db):
     calls = {"add": 0}
 

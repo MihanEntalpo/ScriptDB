@@ -29,10 +29,10 @@ from .abstractdb import (
     require_init,
     _get_migrations_table_sql,
     _is_signature_binding_error,
-    _script_has_transaction,
-    _script_starts_unfinished_transaction,
+    _atomic_migration_script,
+    _row_columns,
 )
-from .dbbuilder import _SQLBuilder
+from .dbbuilder import _SQLBuilder, _quote_ident
 from ._rowfactory import (
     RowFactorySetting,
     RowType,
@@ -81,7 +81,12 @@ class _SyncDBOpenContext(Generic[T]):
             instance.legacy_sqlite_support = self._legacy_sqlite_support  # type: ignore[attr-defined]
         instance.auto_create = self._auto_create  # type: ignore[attr-defined]
         instance.use_wal = self._use_wal  # type: ignore[attr-defined]
-        instance.init()
+        try:
+            instance.init()
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                instance.close()
+            raise
         self._db = instance
         return instance
 
@@ -112,8 +117,9 @@ class SyncBaseDB(AbstractBaseDB):
         self.conn: sqlite3.Connection = cast(sqlite3.Connection, None)
         self._periodic_threads: List[threading.Thread] = []
         self._stop_event = threading.Event()
-        self._upsert_lock = threading.Lock()
-        self._close_lock = threading.Lock()
+        self._close_lock = threading.RLock()
+        self._operation_lock = threading.RLock()
+        self._upsert_lock = self._operation_lock
         self._row_factory_setting: RowFactorySetting = sqlite3.Row
         self._rows_as_dict = False
         self._in_transaction = False
@@ -142,8 +148,13 @@ class SyncBaseDB(AbstractBaseDB):
     def begin(self) -> None:
         if self._in_transaction:
             raise RuntimeError("A transaction is already in progress")
-        self.conn.execute("BEGIN")
-        self._in_transaction = True
+        self._operation_lock.acquire()
+        try:
+            self.conn.execute("BEGIN")
+            self._in_transaction = True
+        except BaseException:
+            self._operation_lock.release()
+            raise
 
     @require_init
     def commit(self) -> None:
@@ -151,6 +162,7 @@ class SyncBaseDB(AbstractBaseDB):
             raise RuntimeError("No active transaction to commit")
         self.conn.commit()
         self._in_transaction = False
+        self._operation_lock.release()
 
     @require_init
     def rollback(self) -> None:
@@ -158,6 +170,7 @@ class SyncBaseDB(AbstractBaseDB):
             raise RuntimeError("No active transaction to roll back")
         self.conn.rollback()
         self._in_transaction = False
+        self._operation_lock.release()
 
     @contextlib.contextmanager
     def transaction(self):
@@ -199,30 +212,46 @@ class SyncBaseDB(AbstractBaseDB):
         )
 
     def init(self) -> None:
+        if self.conn is not None or self.initialized:
+            raise RuntimeError("database is already initialized")
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._stop_event.clear()
+        self._pk_cache.clear()
+        for hook in self._query_hooks:
+            hook["count"] = 0
+            hook["running"] = False
         if getattr(self, "use_wal", False):
             self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self._configure_row_factory()
         self._is_closed = False
         self.initialized = True
         try:
             self._ensure_migrations_table()
             self._apply_migrations()
-        except Exception:
+        except BaseException:
             self.initialized = False
+            self.conn.close()
+            self.conn = cast(sqlite3.Connection, None)
             raise
 
         for seconds, method in self._periodic_specs:
 
             def runner(method=method, seconds=seconds):
                 while not self._stop_event.wait(seconds):
-                    logger.debug("Launching method %s", method.__name__)
-                    method()
-                    logger.debug(
-                        "Method %s finished, next run in %s seconds",
-                        method.__name__,
-                        seconds,
-                    )
+                    try:
+                        with self._operation_lock:
+                            if not self.initialized:
+                                return
+                            logger.debug("Launching method %s", method.__name__)
+                            method()
+                            logger.debug(
+                                "Method %s finished, next run in %s seconds",
+                                method.__name__,
+                                seconds,
+                            )
+                    except Exception:
+                        logger.exception("Periodic method %s failed", method.__name__)
 
             t = threading.Thread(target=runner, daemon=True)
             t.start()
@@ -255,11 +284,16 @@ class SyncBaseDB(AbstractBaseDB):
                     raise TypeError(
                         f"'sql' for migration {name} must be a string or SQL builder instance"
                     )
+                script = _atomic_migration_script([sql], name)
                 try:
-                    logger.debug("Applying migration by executing SQL script: %s", sql)
-                    self.conn.executescript(sql)
-                except Exception as exc:
-                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
+                    logger.debug("Applying migration by executing SQL script: %s", script)
+                    self.conn.executescript(script)
+                except BaseException as exc:
+                    if self.conn.in_transaction:
+                        self.conn.rollback()
+                    if isinstance(exc, Exception):
+                        raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
+                    raise
             elif "sqls" in mig:
                 sqls = mig["sqls"]
                 if not isinstance(sqls, Sequence) or isinstance(sqls, (str, bytes)):
@@ -274,21 +308,17 @@ class SyncBaseDB(AbstractBaseDB):
                         raise TypeError(
                             f"'sqls' for migration {name} must contain only strings or SQL builder instances"
                         )
-                    if _script_starts_unfinished_transaction(sql):
-                        raise ValueError(
-                            f"'sqls' for migration {name} contains a BEGIN without COMMIT/ROLLBACK"
-                        )
                     rendered.append(sql)
-                body = "\n".join(sql if sql.rstrip().endswith(";") else f"{sql};" for sql in rendered)
-                user_wrapped = any(_script_has_transaction(sql) for sql in rendered)
-                script = body if user_wrapped else f"BEGIN;\n{body}\nCOMMIT;"
+                script = _atomic_migration_script(rendered, name)
                 try:
                     logger.debug("Applying migration by executing SQL script: %s", script)
                     self.conn.executescript(script)
-                except Exception as exc:
-                    if not user_wrapped:
-                        self.conn.execute("ROLLBACK")
-                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
+                except BaseException as exc:
+                    if self.conn.in_transaction:
+                        self.conn.rollback()
+                    if isinstance(exc, Exception):
+                        raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
+                    raise
             else:
                 func = mig["function"]
                 if isinstance(func, str):
@@ -321,20 +351,27 @@ class SyncBaseDB(AbstractBaseDB):
                         f"'function' for migration {name} must accept parameters {signature_hint}"
                     ) from exc
                 try:
+                    self.conn.execute("BEGIN")
+                    self._in_transaction = True
                     func(*call_args)
-                except Exception as exc:
-                    raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
-            sql = "INSERT INTO applied_migrations(name) VALUES (?)"
-            logger.debug("Executing SQL: %s; params: (%s,)", sql, name)
-            self.conn.execute(sql, (name,))
-            self._maybe_commit()
+                    sql = "INSERT INTO applied_migrations(name) VALUES (?)"
+                    self.conn.execute(sql, (name,))
+                    self.conn.commit()
+                    self._in_transaction = False
+                except BaseException as exc:
+                    if self.conn.in_transaction:
+                        self.conn.rollback()
+                    self._in_transaction = False
+                    if isinstance(exc, Exception):
+                        raise RuntimeError(f"Error while applying migration {name}: {exc}") from exc
+                    raise
 
     @require_init
     def _primary_key(self, table: str) -> str:
         if table not in self._pk_cache:
-            sql = f"PRAGMA table_info({table})"
+            sql = "SELECT name, pk FROM pragma_table_info(?)"
             logger.debug("Executing SQL: %s", sql)
-            cur = self.conn.execute(sql)
+            cur = self.conn.execute(sql, (table,))
             rows = cur.fetchall()
             cur.close()
             if not rows:
@@ -349,11 +386,19 @@ class SyncBaseDB(AbstractBaseDB):
 
     def _on_query(self) -> None:
         for hook in self._query_hooks:
+            if hook["running"]:
+                continue
             hook["count"] += 1
             if hook["count"] >= hook["interval"]:
                 hook["count"] = 0
                 logger.debug("Launching method %s", hook["method"].__name__)
-                hook["method"]()
+                hook["running"] = True
+                try:
+                    hook["method"]()
+                except Exception:
+                    logger.exception("Query hook %s failed", hook["method"].__name__)
+                finally:
+                    hook["running"] = False
 
     @require_init
     def execute(
@@ -375,19 +420,40 @@ class SyncBaseDB(AbstractBaseDB):
         seq_params: Iterable[Sequence[Any]],
     ) -> sqlite3.Cursor:
         logger.debug("Executing many SQL: %s; params: %s", sql, seq_params)
-        cur = self.conn.executemany(sql, seq_params)
+        cur = self._execute_many_atomic(sql, seq_params)
         self._maybe_commit()
         self._on_query()
         return cur
 
+    def _execute_many_atomic(self, sql: str, seq_params: Iterable[Sequence[Any]]) -> sqlite3.Cursor:
+        savepoint = "scriptdb_batch"
+        self.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            cur = self.conn.executemany(sql, seq_params)
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return cur
+        except BaseException:
+            self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+
     @require_init
     def insert_one(self, table: str, row: Dict[str, Any]) -> Any:
         pk_col = self._primary_key(table)
-        cols = ", ".join(row.keys())
-        placeholders = ", ".join([f":{c}" for c in row])
-        sql = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
+        table_sql = _quote_ident(table)
+        if not row:
+            cur = self.conn.execute(f"INSERT INTO {table_sql} DEFAULT VALUES")
+            self._maybe_commit()
+            self._on_query()
+            pk = cur.lastrowid
+            cur.close()
+            return pk
+        cols = _row_columns([row])
+        col_clause = ", ".join(_quote_ident(column) for column in cols)
+        placeholders = ", ".join("?" for _ in cols)
+        sql = f"INSERT INTO {table_sql} ({col_clause}) VALUES ({placeholders})"
         logger.debug("Executing SQL: %s; params: %s", sql, row)
-        cur = self.conn.execute(sql, row)
+        cur = self.conn.execute(sql, tuple(row[column] for column in cols))
         self._maybe_commit()
         self._on_query()
         pk = row.get(pk_col, cur.lastrowid)
@@ -398,11 +464,12 @@ class SyncBaseDB(AbstractBaseDB):
     def insert_many(self, table: str, rows: List[Dict[str, Any]]) -> None:
         if not rows:
             return
-        cols = rows[0].keys()
-        col_clause = ", ".join(cols)
-        placeholders = ", ".join([f":{c}" for c in cols])
-        sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
-        self.conn.executemany(sql, rows)
+        cols = _row_columns(rows)
+        col_clause = ", ".join(_quote_ident(column) for column in cols)
+        placeholders = ", ".join("?" for _ in cols)
+        sql = f"INSERT INTO {_quote_ident(table)} ({col_clause}) VALUES ({placeholders})"
+        values = [tuple(row[column] for column in cols) for row in rows]
+        self._execute_many_atomic(sql, values)
         self._maybe_commit()
         self._on_query()
 
@@ -414,20 +481,25 @@ class SyncBaseDB(AbstractBaseDB):
                 return self._legacy_upsert_one_locked(table, row)
             sqlite_backend.ensure_upsert_supported()
             pk_col = self._primary_key(table)
-            cols = row.keys()
-            col_clause = ", ".join(cols)
-            placeholders = ", ".join([f":{c}" for c in cols])
-            insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+            if not row:
+                return self.insert_one(table, row)
+            cols = _row_columns([row])
+            col_clause = ", ".join(_quote_ident(column) for column in cols)
+            placeholders = ", ".join("?" for _ in cols)
+            insert_sql = f"INSERT INTO {_quote_ident(table)} ({col_clause}) VALUES ({placeholders})"
+            values = tuple(row[column] for column in cols)
             if pk_col not in row:
-                cur = self.execute(insert_sql, row)
+                cur = self.execute(insert_sql, values)
                 return cur.lastrowid
             update_cols = [c for c in cols if c != pk_col]
             if update_cols:
-                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
-                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+                assignments = ", ".join(
+                    f"{_quote_ident(c)}=excluded.{_quote_ident(c)}" for c in update_cols
+                )
+                upsert_sql = f"{insert_sql} ON CONFLICT({_quote_ident(pk_col)}) DO UPDATE SET {assignments}"
             else:
-                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
-            cur = self.execute(upsert_sql, row)
+                upsert_sql = f"{insert_sql} ON CONFLICT({_quote_ident(pk_col)}) DO NOTHING"
+            cur = self.execute(upsert_sql, values)
             return row.get(pk_col, cur.lastrowid)
 
     @require_init
@@ -441,28 +513,41 @@ class SyncBaseDB(AbstractBaseDB):
             if not rows:
                 return
             pk_col = self._primary_key(table)
-            cols = rows[0].keys()
-            col_clause = ", ".join(cols)
-            placeholders = ", ".join([f":{c}" for c in cols])
-            insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+            cols = _row_columns(rows)
+            col_clause = ", ".join(_quote_ident(column) for column in cols)
+            placeholders = ", ".join("?" for _ in cols)
+            insert_sql = f"INSERT INTO {_quote_ident(table)} ({col_clause}) VALUES ({placeholders})"
             update_cols = [c for c in cols if c != pk_col]
             if update_cols:
-                assignments = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
-                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO UPDATE SET {assignments}"
+                assignments = ", ".join(
+                    f"{_quote_ident(c)}=excluded.{_quote_ident(c)}" for c in update_cols
+                )
+                upsert_sql = f"{insert_sql} ON CONFLICT({_quote_ident(pk_col)}) DO UPDATE SET {assignments}"
             else:
-                upsert_sql = f"{insert_sql} ON CONFLICT({pk_col}) DO NOTHING"
-            self.conn.executemany(upsert_sql, rows)
+                upsert_sql = f"{insert_sql} ON CONFLICT({_quote_ident(pk_col)}) DO NOTHING"
+            values = [tuple(row[column] for column in cols) for row in rows]
+            self._execute_many_atomic(upsert_sql, values)
             self._maybe_commit()
             self._on_query()
 
     def _legacy_upsert_one_locked(self, table: str, row: Dict[str, Any], *, emit_query_hook: bool = True) -> Any:
         pk_col = self._primary_key(table)
-        cols = tuple(row.keys())
-        col_clause = ", ".join(cols)
-        placeholders = ", ".join([f":{c}" for c in cols])
-        insert_sql = f"INSERT INTO {table} ({col_clause}) VALUES ({placeholders})"
+        table_sql = _quote_ident(table)
+        if not row:
+            cur = self.conn.execute(f"INSERT INTO {table_sql} DEFAULT VALUES")
+            self._maybe_commit()
+            if emit_query_hook:
+                self._on_query()
+            pk = cur.lastrowid
+            cur.close()
+            return pk
+        cols = _row_columns([row])
+        col_clause = ", ".join(_quote_ident(column) for column in cols)
+        placeholders = ", ".join("?" for _ in cols)
+        values = tuple(row[column] for column in cols)
+        insert_sql = f"INSERT INTO {table_sql} ({col_clause}) VALUES ({placeholders})"
         if pk_col not in row:
-            cur = self.conn.execute(insert_sql, row)
+            cur = self.conn.execute(insert_sql, values)
             self._maybe_commit()
             if emit_query_hook:
                 self._on_query()
@@ -478,25 +563,26 @@ class SyncBaseDB(AbstractBaseDB):
             started_transaction = True
         try:
             if update_cols:
-                assignments = ", ".join([f"{c}=:{c}" for c in update_cols])
-                update_sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:{pk_col}"
-                cur = self.conn.execute(update_sql, row)
+                assignments = ", ".join(f"{_quote_ident(c)}=?" for c in update_cols)
+                update_sql = f"UPDATE {table_sql} SET {assignments} WHERE {_quote_ident(pk_col)}=?"
+                update_values = tuple(row[column] for column in update_cols) + (row[pk_col],)
+                cur = self.conn.execute(update_sql, update_values)
                 updated = cur.rowcount
                 cur.close()
                 if updated == 0:
                     cur = self.conn.execute(
-                        f"INSERT OR IGNORE INTO {table} ({col_clause}) VALUES ({placeholders})",
-                        row,
+                        f"INSERT OR IGNORE INTO {table_sql} ({col_clause}) VALUES ({placeholders})",
+                        values,
                     )
                     inserted = cur.rowcount
                     cur.close()
                     if inserted == 0:
-                        cur = self.conn.execute(update_sql, row)
+                        cur = self.conn.execute(update_sql, update_values)
                         cur.close()
             else:
                 cur = self.conn.execute(
-                    f"INSERT OR IGNORE INTO {table} ({col_clause}) VALUES ({placeholders})",
-                    row,
+                    f"INSERT OR IGNORE INTO {table_sql} ({col_clause}) VALUES ({placeholders})",
+                    values,
                 )
                 cur.close()
         except Exception:
@@ -515,6 +601,7 @@ class SyncBaseDB(AbstractBaseDB):
     def _legacy_upsert_many_locked(self, table: str, rows: List[Dict[str, Any]]) -> None:
         if not rows:
             return
+        _row_columns(rows)
         started_transaction = False
         if not self._in_transaction:
             self.conn.execute("BEGIN")
@@ -536,7 +623,7 @@ class SyncBaseDB(AbstractBaseDB):
     @require_init
     def delete_one(self, table: str, pk: Any) -> int:
         pk_col = self._primary_key(table)
-        sql = f"DELETE FROM {table} WHERE {pk_col}=?"
+        sql = f"DELETE FROM {_quote_ident(table)} WHERE {_quote_ident(pk_col)}=?"
         cur = self.conn.execute(sql, (pk,))
         self._maybe_commit()
         self._on_query()
@@ -550,7 +637,7 @@ class SyncBaseDB(AbstractBaseDB):
         params: Union[Sequence[Any], Mapping[str, Any], None] = None,
     ) -> int:
         ps = params if params is not None else ()
-        sql = f"DELETE FROM {table} WHERE {where}"
+        sql = f"DELETE FROM {_quote_ident(table)} WHERE {where}"
         cur = self.conn.execute(sql, ps)
         self._maybe_commit()
         self._on_query()
@@ -561,11 +648,11 @@ class SyncBaseDB(AbstractBaseDB):
         if not row:
             return 0
         pk_col = self._primary_key(table)
-        assignments = ", ".join([f"{c}=:{c}" for c in row])
-        sql = f"UPDATE {table} SET {assignments} WHERE {pk_col}=:pk"
-        row = dict(row)
-        row["pk"] = pk
-        cur = self.conn.execute(sql, row)
+        cols = _row_columns([row])
+        assignments = ", ".join(f"{_quote_ident(column)}=?" for column in cols)
+        sql = f"UPDATE {_quote_ident(table)} SET {assignments} WHERE {_quote_ident(pk_col)}=?"
+        values = tuple(row[column] for column in cols) + (pk,)
+        cur = self.conn.execute(sql, values)
         self._maybe_commit()
         self._on_query()
         return cur.rowcount
@@ -721,15 +808,21 @@ class SyncBaseDB(AbstractBaseDB):
                 self._is_closed = True
                 return
             self._stop_event.set()
+            current = threading.current_thread()
             for t in self._periodic_threads:
-                t.join(timeout=0)
+                if t is not current:
+                    t.join()
             self._periodic_threads.clear()
-            if self.conn:
-                self._in_transaction = False
-                self.conn.close()
-                self.conn = cast(sqlite3.Connection, None)
-            self.initialized = False
-            self._is_closed = True
+            with self._operation_lock:
+                if self.conn:
+                    if self._in_transaction:
+                        self.conn.rollback()
+                        self._in_transaction = False
+                        self._operation_lock.release()
+                    self.conn.close()
+                    self.conn = cast(sqlite3.Connection, None)
+                self.initialized = False
+                self._is_closed = True
 
     def __enter__(self: T) -> T:
         if not self.initialized:
